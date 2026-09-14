@@ -1,0 +1,14 @@
+# Local configuration
+.env
+.env.*
+!.env.example
+
+# Dependencies and build output
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Tool output
+.eslintcache
+coverage/

@@ -23,8 +23,12 @@ from app.database import Base
 
 class SupplierStatus(str, enum.Enum):
     NEW = "new"
+    SUBMITTED = "submitted"
+    UNDER_REVIEW = "under_review"
     PROCESSING = "processing"
     NEEDS_REVIEW = "needs_review"
+    CHANGES_REQUESTED = "changes_requested"
+    RESUBMITTED = "resubmitted"
     APPROVED = "approved"
     REJECTED = "rejected"
 
@@ -81,6 +85,8 @@ class Supplier(Base):
         DateTime(timezone=True), nullable=True
     )
     erp_supplier_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    review_round: Mapped[int] = mapped_column(Integer, default=0)
+    change_request: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     documents: Mapped[list["Document"]] = relationship(
         back_populates="supplier", cascade="all, delete-orphan"

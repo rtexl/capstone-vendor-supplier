@@ -31,7 +31,9 @@ Langfuse traces AI calls, Promptfoo evaluates answer quality, and Prometheus exp
 1. Copy `backend/.env.example` to `backend/.env`.
 2. Add either an OpenRouter key or the existing Azure OpenAI settings.
 3. Run `docker compose up --build -d` from the repository root.
-4. Open `http://localhost:5173`.
+4. Open the prototype workspaces in separate tabs:
+   - Supplier portal: `http://localhost:5173/supplier`
+   - Reviewer workspace: `http://localhost:5173/reviewer`
 
 See [DOCKER_SETUP.md](DOCKER_SETUP.md) for the complete first-clone guide, verification commands, data-volume behavior, and troubleshooting.
 

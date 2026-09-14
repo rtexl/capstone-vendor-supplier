@@ -11,6 +11,7 @@ import type {
   SupplierDocument,
   SupplierQuestionResponse,
   SupplierSummary,
+  WorkflowTransitionResponse,
 } from './types'
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api'
@@ -100,5 +101,30 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ confirmed: true, reason, reviewer_name: reviewerName }),
+    }),
+  submitSupplier: (supplierId: string) =>
+    request<WorkflowTransitionResponse>(`/suppliers/${supplierId}/submit`, {
+      method: 'POST',
+    }),
+  resubmitSupplier: (supplierId: string) =>
+    request<WorkflowTransitionResponse>(`/suppliers/${supplierId}/resubmit`, {
+      method: 'POST',
+    }),
+  startReview: (supplierId: string) =>
+    request<WorkflowTransitionResponse>(`/suppliers/${supplierId}/review/start`, {
+      method: 'POST',
+    }),
+  requestChanges: (
+    supplierId: string,
+    payload: {
+      documents: Array<{ document_id: string; reason: string }>
+      general_reason?: string
+      reviewer_name?: string
+    },
+  ) =>
+    request<WorkflowTransitionResponse>(`/suppliers/${supplierId}/request-changes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     }),
 }

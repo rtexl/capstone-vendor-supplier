@@ -16,12 +16,14 @@ from app.models import (
 )
 from app.schemas import (
     ApprovalRequest,
+    ChangesRequest,
     ComplianceResultRead,
     ComplianceRunResponse,
     DecisionResponse,
     ExtractedFieldRead,
     ExtractedFieldUpdate,
     RejectionRequest,
+    WorkflowTransitionResponse,
 )
 from app.services.compliance import (
     approval_ready,
@@ -49,10 +51,10 @@ def _get_review_supplier(db: Session, supplier_id: uuid.UUID) -> Supplier:
 
 
 def _ensure_reviewable(supplier: Supplier) -> None:
-    if supplier.status in {SupplierStatus.APPROVED, SupplierStatus.REJECTED}:
+    if supplier.status not in {SupplierStatus.UNDER_REVIEW, SupplierStatus.NEEDS_REVIEW}:
         raise HTTPException(
             status_code=409,
-            detail="A finalized supplier cannot be changed in this demo workflow.",
+            detail="The supplier case must be open in the reviewer workspace.",
         )
 
 
@@ -163,6 +165,7 @@ def approve_supplier(
             erp_supplier_id=supplier.erp_supplier_id,
             decided_at=supplier.decided_at or datetime.now(UTC),
         )
+    _ensure_reviewable(supplier)
 
     results = persist_compliance_results(db, supplier, evaluate_compliance(supplier))
     record_compliance_checks([result.status.value for result in results])
@@ -227,6 +230,7 @@ def reject_supplier(
             erp_supplier_id=None,
             decided_at=supplier.decided_at or datetime.now(UTC),
         )
+    _ensure_reviewable(supplier)
 
     decided_at = datetime.now(UTC)
     supplier.status = SupplierStatus.REJECTED
@@ -253,4 +257,104 @@ def reject_supplier(
         message="Supplier rejected with an audited reason.",
         erp_supplier_id=None,
         decided_at=decided_at,
+    )
+
+
+@router.post("/{supplier_id}/review/start", response_model=WorkflowTransitionResponse)
+def start_review(
+    supplier_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> WorkflowTransitionResponse:
+    supplier = _get_review_supplier(db, supplier_id)
+    if supplier.status == SupplierStatus.UNDER_REVIEW:
+        return WorkflowTransitionResponse(
+            supplier_id=supplier.id,
+            status=supplier.status,
+            message="Review is already in progress.",
+            review_round=supplier.review_round,
+        )
+    if supplier.status not in {SupplierStatus.SUBMITTED, SupplierStatus.RESUBMITTED}:
+        raise HTTPException(
+            status_code=409,
+            detail="Only submitted or resubmitted cases can be opened for review.",
+        )
+    supplier.status = SupplierStatus.UNDER_REVIEW
+    db.add(
+        AuditEvent(
+            supplier_id=supplier.id,
+            action="supplier.review_started",
+            entity_type="supplier",
+            entity_id=str(supplier.id),
+            details={"review_round": supplier.review_round},
+        )
+    )
+    db.commit()
+    return WorkflowTransitionResponse(
+        supplier_id=supplier.id,
+        status=supplier.status,
+        message=f"Review round {supplier.review_round} started.",
+        review_round=supplier.review_round,
+    )
+
+
+@router.post("/{supplier_id}/request-changes", response_model=WorkflowTransitionResponse)
+def request_supplier_changes(
+    supplier_id: uuid.UUID,
+    payload: ChangesRequest,
+    db: Session = Depends(get_db),
+) -> WorkflowTransitionResponse:
+    supplier = _get_review_supplier(db, supplier_id)
+    _ensure_reviewable(supplier)
+    documents_by_id = {document.id: document for document in supplier.documents}
+    requested_ids = [item.document_id for item in payload.documents]
+    if len(requested_ids) != len(set(requested_ids)):
+        raise HTTPException(status_code=422, detail="Each document can only be flagged once.")
+    missing_ids = [
+        str(document_id)
+        for document_id in requested_ids
+        if document_id not in documents_by_id
+    ]
+    if missing_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="Every flagged document must belong to this supplier case.",
+        )
+
+    requested_at = datetime.now(UTC)
+    document_feedback = [
+        {
+            "document_id": str(item.document_id),
+            "document_type": documents_by_id[item.document_id].document_type.value,
+            "filename": documents_by_id[item.document_id].filename,
+            "reason": item.reason.strip(),
+        }
+        for item in payload.documents
+    ]
+    change_request = {
+        "review_round": supplier.review_round,
+        "requested_at": requested_at.isoformat(),
+        "reviewer_name": payload.reviewer_name.strip(),
+        "general_reason": payload.general_reason.strip() if payload.general_reason else None,
+        "documents": document_feedback,
+    }
+    supplier.status = SupplierStatus.CHANGES_REQUESTED
+    supplier.change_request = change_request
+    db.execute(
+        delete(ComplianceResult).where(ComplianceResult.supplier_id == supplier_id)
+    )
+    db.add(
+        AuditEvent(
+            supplier_id=supplier.id,
+            action="supplier.changes_requested",
+            entity_type="supplier",
+            entity_id=str(supplier.id),
+            details=change_request,
+        )
+    )
+    db.commit()
+    return WorkflowTransitionResponse(
+        supplier_id=supplier.id,
+        status=supplier.status,
+        message="Changes requested from the supplier.",
+        review_round=supplier.review_round,
     )

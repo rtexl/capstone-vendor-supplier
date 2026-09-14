@@ -1,13 +1,12 @@
 import ArrowBackRoundedIcon from '@mui/icons-material/ArrowBackRounded'
 import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded'
-import CloudUploadRoundedIcon from '@mui/icons-material/CloudUploadRounded'
-import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded'
 import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded'
 import EditRoundedIcon from '@mui/icons-material/EditRounded'
 import FactCheckRoundedIcon from '@mui/icons-material/FactCheckRounded'
 import HowToRegRoundedIcon from '@mui/icons-material/HowToRegRounded'
 import BlockRoundedIcon from '@mui/icons-material/BlockRounded'
 import QuestionAnswerRoundedIcon from '@mui/icons-material/QuestionAnswerRounded'
+import ReplayRoundedIcon from '@mui/icons-material/ReplayRounded'
 import {
   Alert,
   Box,
@@ -23,13 +22,12 @@ import {
   DialogTitle,
   Divider,
   IconButton,
-  MenuItem,
   Stack,
   TextField,
   Tooltip,
   Typography,
 } from '@mui/material'
-import { ChangeEvent, useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type {
@@ -78,12 +76,7 @@ type FieldConflictDetail = {
 export function SupplierReviewPage() {
   const { supplierId = '' } = useParams()
   const [supplier, setSupplier] = useState<SupplierDetail | null>(null)
-  const [documentType, setDocumentType] = useState<DocumentType>('registration')
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(true)
-  const [uploading, setUploading] = useState(false)
-  const [documentToDelete, setDocumentToDelete] = useState<SupplierDocument | null>(null)
-  const [deleting, setDeleting] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [question, setQuestion] = useState('')
   const [asking, setAsking] = useState(false)
@@ -96,19 +89,20 @@ export function SupplierReviewPage() {
   const [decisionAction, setDecisionAction] = useState<'approve' | 'reject' | null>(null)
   const [rejectionReason, setRejectionReason] = useState('')
   const [deciding, setDeciding] = useState(false)
+  const [startingReview, setStartingReview] = useState(false)
+  const [changesOpen, setChangesOpen] = useState(false)
+  const [changeReasons, setChangeReasons] = useState<Record<string, string>>({})
+  const [generalChangeReason, setGeneralChangeReason] = useState('')
+  const [requestingChanges, setRequestingChanges] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
   const uploadedDocumentTypes = new Set(supplier?.documents.map((document) => document.document_type) ?? [])
-  const availableDocumentTypes = (Object.entries(documentLabels) as [DocumentType, string][])
-    .filter(([value]) => !uploadedDocumentTypes.has(value))
-  const effectiveDocumentType = availableDocumentTypes.some(([value]) => value === documentType)
-    ? documentType
-    : availableDocumentTypes[0]?.[0]
   const allDocumentsReady = uploadedDocumentTypes.size === Object.keys(documentLabels).length
     && supplier?.documents.every((document) => document.processing_status === 'ready')
   const latestProcessingRun = supplier?.ai_runs.find((run) => run.run_type === 'processing')
   const finalized = supplier?.status === 'approved' || supplier?.status === 'rejected'
+  const reviewActive = supplier?.status === 'under_review' || supplier?.status === 'needs_review'
   const approvalReady = supplier?.compliance_results.length === Object.keys(ruleLabels).length
     && supplier.compliance_results.every((result) => result.status === 'pass')
 
@@ -154,40 +148,6 @@ export function SupplierReviewPage() {
   }, [supplierId])
 
   useEffect(() => { void loadSupplier() }, [loadSupplier])
-
-  async function handleUpload() {
-    if (!selectedFile || !effectiveDocumentType) return
-    setUploading(true)
-    setError('')
-    setNotice('')
-    try {
-      await api.uploadDocument(supplierId, effectiveDocumentType, selectedFile)
-      setSelectedFile(null)
-      await loadSupplier()
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Document upload failed.')
-    } finally {
-      setUploading(false)
-    }
-  }
-
-  async function handleDelete() {
-    if (!documentToDelete) return
-    setDeleting(true)
-    setError('')
-    setNotice('')
-    try {
-      await api.deleteDocument(supplierId, documentToDelete.id)
-      setSelectedFile(null)
-      setDocumentToDelete(null)
-      setQuestionResponse(null)
-      await loadSupplier()
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Document deletion failed.')
-    } finally {
-      setDeleting(false)
-    }
-  }
 
   async function handleProcess() {
     setProcessing(true)
@@ -284,12 +244,52 @@ export function SupplierReviewPage() {
     }
   }
 
+  async function handleStartReview() {
+    setStartingReview(true)
+    setError('')
+    try {
+      const result = await api.startReview(supplierId)
+      setNotice(result.message)
+      await loadSupplier()
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'The review could not be started.')
+    } finally {
+      setStartingReview(false)
+    }
+  }
+
+  async function handleRequestChanges() {
+    if (!supplier) return
+    const documents = supplier.documents
+      .filter((document) => changeReasons[document.id]?.trim())
+      .map((document) => ({ document_id: document.id, reason: changeReasons[document.id].trim() }))
+    if (documents.length === 0) return
+    setRequestingChanges(true)
+    setError('')
+    try {
+      const result = await api.requestChanges(supplierId, {
+        documents,
+        general_reason: generalChangeReason.trim() || undefined,
+        reviewer_name: 'Demo reviewer',
+      })
+      setChangesOpen(false)
+      setChangeReasons({})
+      setGeneralChangeReason('')
+      setNotice(result.message)
+      await loadSupplier()
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'The change request could not be sent.')
+    } finally {
+      setRequestingChanges(false)
+    }
+  }
+
   if (loading) return <Box sx={{ display: 'grid', placeItems: 'center', py: 8 }}><CircularProgress /></Box>
   if (!supplier) return <Alert severity="error">{error || 'Supplier was not found.'}</Alert>
 
   return (
     <Stack spacing={3}>
-      <Button component={Link} to="/" startIcon={<ArrowBackRoundedIcon />} sx={{ alignSelf: 'flex-start' }}>Back to dashboard</Button>
+      <Button component={Link} to="/reviewer" startIcon={<ArrowBackRoundedIcon />} sx={{ alignSelf: 'flex-start' }}>Back to review queue</Button>
       <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" spacing={2}>
         <Box>
           <Typography variant="h4">{supplier.name}</Typography>
@@ -299,6 +299,17 @@ export function SupplierReviewPage() {
       </Stack>
       {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
       {notice && <Alert severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
+      {(supplier.status === 'submitted' || supplier.status === 'resubmitted') && (
+        <Alert
+          severity="info"
+          action={<Button color="inherit" onClick={() => void handleStartReview()} disabled={startingReview}>{startingReview ? 'Opening...' : 'Open review'}</Button>}
+        >
+          Review round {supplier.review_round} is waiting to be opened. Reviewer actions remain locked until then.
+        </Alert>
+      )}
+      {supplier.status === 'changes_requested' && (
+        <Alert severity="warning">Waiting for the supplier to replace the flagged documents and resubmit.</Alert>
+      )}
       {finalized && (
         <Alert severity={supplier.status === 'approved' ? 'success' : 'error'}>
           {supplier.status === 'approved'
@@ -308,10 +319,10 @@ export function SupplierReviewPage() {
         </Alert>
       )}
 
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 2fr) minmax(300px, 1fr)' }, gap: 3 }}>
+      <Box>
         <Card><CardContent sx={{ p: { xs: 3, md: 4 } }}>
-          <Typography variant="h6">Documents</Typography>
-          <Typography color="text.secondary" variant="body2" sx={{ mb: 3 }}>PDF or UTF-8 text, up to 10 MB each.</Typography>
+          <Typography variant="h6">Submitted documents</Typography>
+          <Typography color="text.secondary" variant="body2" sx={{ mb: 3 }}>Documents are read-only in the reviewer workspace.</Typography>
           {supplier.documents.length === 0 ? (
             <Alert severity="info">No documents uploaded yet.</Alert>
           ) : (
@@ -326,49 +337,13 @@ export function SupplierReviewPage() {
                       {document.error_message && <Typography variant="caption" color="error" display="block">{document.error_message}</Typography>}
                     </Box>
                   </Stack>
-                  <Stack direction="row" alignItems="center" spacing={0.5}>
-                    <StatusChip status={document.processing_status} />
-                    <Tooltip title="Delete document">
-                      <IconButton
-                        aria-label={`Delete ${document.filename}`}
-                        color="error"
-                        disabled={finalized}
-                        onClick={() => setDocumentToDelete(document)}
-                      >
-                        <DeleteOutlineRoundedIcon />
-                      </IconButton>
-                    </Tooltip>
-                  </Stack>
+                  <StatusChip status={document.processing_status} />
                 </Stack>
               ))}
             </Stack>
           )}
         </CardContent></Card>
 
-        <Card><CardContent sx={{ p: 3 }}>
-          <Stack spacing={2.5}>
-            <Typography variant="h6">Upload document</Typography>
-            {finalized ? (
-              <Alert severity="info">Documents are locked after a final decision.</Alert>
-            ) : effectiveDocumentType ? (
-              <>
-                <TextField select label="Document type" value={effectiveDocumentType} onChange={(event) => setDocumentType(event.target.value as DocumentType)}>
-                  {availableDocumentTypes.map(([value, label]) => <MenuItem key={value} value={value}>{label}</MenuItem>)}
-                </TextField>
-                <Button component="label" variant="outlined" startIcon={<CloudUploadRoundedIcon />}>
-                  {selectedFile ? 'Change file' : 'Choose file'}
-                  <input hidden type="file" accept="application/pdf,text/plain,.pdf,.txt" onChange={(event: ChangeEvent<HTMLInputElement>) => setSelectedFile(event.target.files?.[0] ?? null)} />
-                </Button>
-                {selectedFile && <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{selectedFile.name}</Typography>}
-                <Button variant="contained" disabled={!selectedFile || uploading} onClick={handleUpload}>
-                  {uploading ? 'Uploading and extracting...' : 'Upload document'}
-                </Button>
-              </>
-            ) : (
-              <Alert severity="success">All three document categories have been uploaded.</Alert>
-            )}
-          </Stack>
-        </CardContent></Card>
       </Box>
 
       <Card><CardContent sx={{ p: { xs: 3, md: 4 } }}>
@@ -390,7 +365,7 @@ export function SupplierReviewPage() {
           <Button
             variant="contained"
             startIcon={processing ? <CircularProgress size={18} color="inherit" /> : <AutoAwesomeRoundedIcon />}
-            disabled={!allDocumentsReady || processing || finalized}
+            disabled={!allDocumentsReady || processing || !reviewActive}
             onClick={handleProcess}
           >
             {processing ? 'Processing documents...' : supplier.extracted_fields.length ? 'Reprocess documents' : 'Process documents'}
@@ -469,7 +444,7 @@ export function SupplierReviewPage() {
                         label={field.needs_review ? 'Review' : `${Math.round(field.confidence * 100)}%`}
                       />
                       <Tooltip title="Correct field">
-                        <IconButton size="small" disabled={finalized} onClick={() => openFieldEditor(field)}>
+                        <IconButton size="small" disabled={!reviewActive} onClick={() => openFieldEditor(field)}>
                           <EditRoundedIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
@@ -505,7 +480,7 @@ export function SupplierReviewPage() {
           <Button
             variant="outlined"
             startIcon={checkingCompliance ? <CircularProgress size={18} /> : <FactCheckRoundedIcon />}
-            disabled={checkingCompliance || supplier.extracted_fields.length === 0 || finalized}
+            disabled={checkingCompliance || supplier.extracted_fields.length === 0 || !reviewActive}
             onClick={handleRunCompliance}
           >
             {checkingCompliance ? 'Checking...' : supplier.compliance_results.length ? 'Rerun checks' : 'Run checks'}
@@ -539,19 +514,28 @@ export function SupplierReviewPage() {
           </Alert>
           <Stack direction="row" spacing={1}>
             <Button
+              color="warning"
+              variant="outlined"
+              startIcon={<ReplayRoundedIcon />}
+              disabled={!reviewActive}
+              onClick={() => setChangesOpen(true)}
+            >
+              Request changes
+            </Button>
+            <Button
               color="error"
               variant="outlined"
               startIcon={<BlockRoundedIcon />}
-              disabled={finalized}
+              disabled={!reviewActive}
               onClick={() => setDecisionAction('reject')}
             >
-              Reject
+              Final reject
             </Button>
             <Button
               color="success"
               variant="contained"
               startIcon={<HowToRegRoundedIcon />}
-              disabled={!approvalReady || finalized}
+              disabled={!approvalReady || !reviewActive}
               onClick={() => setDecisionAction('approve')}
             >
               Approve and send to ERP
@@ -591,7 +575,7 @@ export function SupplierReviewPage() {
       </Dialog>
 
       <Dialog open={decisionAction !== null} onClose={() => !deciding && setDecisionAction(null)} fullWidth maxWidth="sm">
-        <DialogTitle>{decisionAction === 'approve' ? 'Approve supplier?' : 'Reject supplier?'}</DialogTitle>
+        <DialogTitle>{decisionAction === 'approve' ? 'Approve supplier?' : 'Finally reject supplier?'}</DialogTitle>
         <DialogContent>
           {decisionAction === 'approve' ? (
             <DialogContentText>
@@ -599,7 +583,7 @@ export function SupplierReviewPage() {
             </DialogContentText>
           ) : (
             <Stack spacing={2} sx={{ pt: 1 }}>
-              <DialogContentText>Provide an auditable rejection reason. The supplier will be finalized without an ERP record.</DialogContentText>
+              <DialogContentText>This is a terminal decision. Use “Request changes” when the supplier should be allowed to replace documents and resubmit.</DialogContentText>
               <TextField
                 label="Rejection reason"
                 value={rejectionReason}
@@ -624,17 +608,42 @@ export function SupplierReviewPage() {
         </DialogActions>
       </Dialog>
 
-      <Dialog open={documentToDelete !== null} onClose={() => !deleting && setDocumentToDelete(null)}>
-        <DialogTitle>Delete uploaded document?</DialogTitle>
+      <Dialog open={changesOpen} onClose={() => !requestingChanges && setChangesOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Request document changes</DialogTitle>
         <DialogContent>
-          <DialogContentText>
-            {documentToDelete?.filename} will be removed. Its document category will become available for a replacement upload.
+          <DialogContentText sx={{ mb: 2 }}>
+            Add feedback to every document the supplier must replace. The case will return to the supplier portal.
           </DialogContentText>
+          <Stack spacing={2}>
+            {supplier.documents.map((document) => (
+              <TextField
+                key={document.id}
+                label={`${documentLabels[document.document_type]} feedback (optional)`}
+                value={changeReasons[document.id] ?? ''}
+                onChange={(event) => setChangeReasons((current) => ({ ...current, [document.id]: event.target.value }))}
+                placeholder={`Explain what must be corrected in ${document.filename}`}
+                multiline
+                minRows={2}
+              />
+            ))}
+            <TextField
+              label="General message (optional)"
+              value={generalChangeReason}
+              onChange={(event) => setGeneralChangeReason(event.target.value)}
+              multiline
+              minRows={2}
+            />
+          </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDocumentToDelete(null)} disabled={deleting}>Cancel</Button>
-          <Button color="error" variant="contained" onClick={handleDelete} disabled={deleting}>
-            {deleting ? 'Deleting...' : 'Delete'}
+          <Button onClick={() => setChangesOpen(false)} disabled={requestingChanges}>Cancel</Button>
+          <Button
+            color="warning"
+            variant="contained"
+            onClick={() => void handleRequestChanges()}
+            disabled={requestingChanges || !Object.values(changeReasons).some((reason) => reason.trim().length >= 5)}
+          >
+            {requestingChanges ? 'Sending...' : 'Send change request'}
           </Button>
         </DialogActions>
       </Dialog>

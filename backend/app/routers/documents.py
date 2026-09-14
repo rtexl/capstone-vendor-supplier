@@ -24,6 +24,7 @@ from app.services.retrieval import delete_supplier_chunks, get_chunk_collection
 
 router = APIRouter(prefix="/suppliers", tags=["documents"])
 ALLOWED_CONTENT_TYPES = {"application/pdf": ".pdf", "text/plain": ".txt"}
+SUPPLIER_EDITABLE_STATUSES = {SupplierStatus.NEW, SupplierStatus.CHANGES_REQUESTED}
 
 
 @router.post(
@@ -41,10 +42,10 @@ async def upload_document(
     supplier = db.get(Supplier, supplier_id)
     if supplier is None:
         raise HTTPException(status_code=404, detail="Supplier was not found.")
-    if supplier.status in {SupplierStatus.APPROVED, SupplierStatus.REJECTED}:
+    if supplier.status not in SUPPLIER_EDITABLE_STATUSES:
         raise HTTPException(
             status_code=409,
-            detail="A finalized supplier cannot be changed in this demo workflow.",
+            detail="Documents can only be changed before submission or while changes are requested.",
         )
 
     existing_document = db.scalar(
@@ -154,14 +155,21 @@ def delete_document(
     file_path = Path(document.storage_path).resolve()
     upload_root = settings.upload_dir.resolve()
     supplier = db.get(Supplier, supplier_id)
-    if supplier is not None and supplier.status in {
-        SupplierStatus.APPROVED,
-        SupplierStatus.REJECTED,
-    }:
+    if supplier is not None and supplier.status not in SUPPLIER_EDITABLE_STATUSES:
         raise HTTPException(
             status_code=409,
-            detail="A finalized supplier cannot be changed in this demo workflow.",
+            detail="Documents can only be changed before submission or while changes are requested.",
         )
+    if supplier is not None and supplier.status == SupplierStatus.CHANGES_REQUESTED:
+        requested_ids = {
+            item.get("document_id")
+            for item in (supplier.change_request or {}).get("documents", [])
+        }
+        if str(document.id) not in requested_ids:
+            raise HTTPException(
+                status_code=409,
+                detail="Only documents flagged by the reviewer can be replaced.",
+            )
     db.execute(
         delete(ExtractedField).where(ExtractedField.supplier_id == supplier_id)
     )
@@ -169,7 +177,7 @@ def delete_document(
         delete(ComplianceResult).where(ComplianceResult.supplier_id == supplier_id)
     )
     delete_supplier_chunks(get_chunk_collection(), str(supplier_id))
-    if supplier is not None:
+    if supplier is not None and supplier.status == SupplierStatus.NEW:
         supplier.status = SupplierStatus.NEW
         supplier.decision_reason = None
         supplier.decided_at = None

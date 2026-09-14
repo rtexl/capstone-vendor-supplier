@@ -23,7 +23,7 @@ export function SupplierIntakePage() {
         country,
         contact_email: email.trim() || undefined,
       })
-      navigate(`/suppliers/${supplier.id}`)
+      navigate(`/supplier/${supplier.id}`)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Supplier creation failed.')
     } finally {
@@ -33,7 +33,7 @@ export function SupplierIntakePage() {
 
   return (
     <Stack spacing={3} maxWidth={720}>
-      <Button component={Link} to="/" startIcon={<ArrowBackRoundedIcon />} sx={{ alignSelf: 'flex-start' }}>Back to dashboard</Button>
+      <Button component={Link} to="/supplier" startIcon={<ArrowBackRoundedIcon />} sx={{ alignSelf: 'flex-start' }}>Back to my cases</Button>
       <Box>
         <Typography variant="h4">Create supplier case</Typography>
         <Typography color="text.secondary" sx={{ mt: 0.75 }}>Start with basic details, then upload the required documents.</Typography>

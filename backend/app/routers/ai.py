@@ -52,10 +52,10 @@ def process_supplier(
     settings: Settings = Depends(get_settings),
 ) -> ProcessSupplierResponse:
     supplier = _get_supplier_with_documents(db, supplier_id)
-    if supplier.status in {SupplierStatus.APPROVED, SupplierStatus.REJECTED}:
+    if supplier.status not in {SupplierStatus.UNDER_REVIEW, SupplierStatus.NEEDS_REVIEW}:
         raise HTTPException(
             status_code=409,
-            detail="A finalized supplier cannot be reprocessed in this demo workflow.",
+            detail="The reviewer must open the submitted case before processing documents.",
         )
     required_types = set(DocumentType)
     ready_types = {

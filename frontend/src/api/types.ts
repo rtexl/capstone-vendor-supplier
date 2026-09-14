@@ -1,4 +1,13 @@
-export type SupplierStatus = 'new' | 'processing' | 'needs_review' | 'approved' | 'rejected'
+export type SupplierStatus =
+  | 'new'
+  | 'submitted'
+  | 'under_review'
+  | 'processing'
+  | 'needs_review'
+  | 'changes_requested'
+  | 'resubmitted'
+  | 'approved'
+  | 'rejected'
 export type DocumentType = 'registration' | 'tax' | 'insurance'
 export type ProcessingStatus = 'processing' | 'ready' | 'failed'
 export type AiRunType = 'processing' | 'question'
@@ -22,7 +31,24 @@ export interface SupplierSummary {
   decision_reason: string | null
   decided_at: string | null
   erp_supplier_id: string | null
+  review_round: number
+  change_request: ChangeRequest | null
   document_count: number
+}
+
+export interface DocumentChangeFeedback {
+  document_id: string
+  document_type: DocumentType
+  filename: string
+  reason: string
+}
+
+export interface ChangeRequest {
+  review_round: number
+  requested_at: string
+  reviewer_name: string
+  general_reason: string | null
+  documents: DocumentChangeFeedback[]
 }
 
 export interface SupplierDocument {
@@ -101,6 +127,13 @@ export interface DecisionResponse {
   message: string
   erp_supplier_id: string | null
   decided_at: string
+}
+
+export interface WorkflowTransitionResponse {
+  supplier_id: string
+  status: SupplierStatus
+  message: string
+  review_round: number
 }
 
 export interface ProcessSupplierResponse {

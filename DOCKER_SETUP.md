@@ -115,7 +115,10 @@ Press `Ctrl+C` to stop following logs; the containers continue running in the ba
 
 ## 6. Open and verify VendorLens
 
-- Application: `http://localhost:5173`
+Open these two prototype workspaces in separate browser tabs (no login is required):
+
+- Supplier portal: `http://localhost:5173/supplier`
+- Reviewer workspace: `http://localhost:5173/reviewer`
 - FastAPI documentation: `http://localhost:8000/docs`
 - Backend health: `http://localhost:8000/api/health`
 - Prometheus metrics: `http://localhost:8000/metrics/`
@@ -130,7 +133,7 @@ The health response should report:
 }
 ```
 
-Create a supplier in the UI, upload registration, tax, and insurance documents, then process the supplier to verify the configured AI provider. Upload-ready examples are available under `sample_documents/` in the cloned repository.
+Create a case in the supplier portal, upload registration, tax, and insurance documents, and submit it. Open the case from the reviewer workspace, start the review, and process the documents to verify the configured AI provider. A reviewer can request replacements for individual documents; the supplier portal then provides the correction and resubmission loop. Upload-ready examples are available under `sample_documents/` in the cloned repository.
 
 ## Everyday commands
 

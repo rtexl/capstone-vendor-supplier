@@ -33,6 +33,8 @@ class SupplierSummary(BaseModel):
     decision_reason: str | None
     decided_at: datetime | None
     erp_supplier_id: str | None
+    review_round: int
+    change_request: dict | None
     document_count: int = 0
 
 
@@ -131,6 +133,24 @@ class RejectionRequest(BaseModel):
     confirmed: Literal[True]
     reason: str = Field(min_length=10, max_length=1000)
     reviewer_name: str = Field(default="Demo reviewer", min_length=2, max_length=100)
+
+
+class DocumentChangeRequest(BaseModel):
+    document_id: uuid.UUID
+    reason: str = Field(min_length=5, max_length=1000)
+
+
+class ChangesRequest(BaseModel):
+    documents: list[DocumentChangeRequest] = Field(min_length=1, max_length=3)
+    general_reason: str | None = Field(default=None, max_length=1000)
+    reviewer_name: str = Field(default="Demo reviewer", min_length=2, max_length=100)
+
+
+class WorkflowTransitionResponse(BaseModel):
+    supplier_id: uuid.UUID
+    status: SupplierStatus
+    message: str
+    review_round: int
 
 
 class DecisionResponse(BaseModel):
