@@ -162,8 +162,20 @@ export interface GeneralAssistantMessage {
   content: string
 }
 
+export type GeneralAssistantArea =
+  | 'supplier_portal'
+  | 'create_supplier_case'
+  | 'supplier_case'
+  | 'review_queue'
+  | 'reviewer_case'
+
 export interface GeneralAssistantResponse {
   answer: string
+  related: boolean
+  links: Array<{
+    label: string
+    path: string
+  }>
   run: {
     model: string
     prompt_version: string

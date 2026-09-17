@@ -28,6 +28,7 @@ class FieldName(str, Enum):
     TAX_IDENTIFIER = "tax_identifier"
     CONTACT_NAME = "contact_name"
     CONTACT_EMAIL = "contact_email"
+    CONTACT_PHONE = "contact_phone"
     INSURANCE_PROVIDER = "insurance_provider"
     INSURANCE_EXPIRY_DATE = "insurance_expiry_date"
     PAYMENT_TERMS = "payment_terms"
@@ -51,8 +52,21 @@ class GroundedAnswer(BaseModel):
     cited_chunk_ids: list[str]
 
 
+class AssistantNavigationTarget(str, Enum):
+    SUPPLIER_PORTAL = "supplier_portal"
+    CREATE_CASE = "create_case"
+    REVIEW_QUEUE = "review_queue"
+
+
+class AssistantNavigation(BaseModel):
+    target: AssistantNavigationTarget
+    label: str = Field(min_length=1, max_length=80)
+
+
 class GeneralAssistantAnswer(BaseModel):
     answer: str = Field(min_length=1, max_length=4000)
+    related: bool = True
+    navigation: list[AssistantNavigation] = Field(default_factory=list, max_length=3)
 
 
 T = TypeVar("T")
@@ -90,7 +104,7 @@ class OpenAIService:
         filename: str,
         redacted_text: str,
     ) -> ModelResult[DocumentExtraction]:
-        prompt = _read_prompt("extraction_v3.txt")
+        prompt = _read_prompt("extraction_v4.txt")
         input_metadata = {
             "document_type": expected_type.value,
             "filename": filename,
@@ -225,11 +239,13 @@ class OpenAIService:
     def answer_general_question(
         self,
         messages: list[dict[str, str]],
+        current_area: str,
     ) -> ModelResult[GeneralAssistantAnswer]:
-        prompt = _read_prompt("supplier_assistant_v1.txt")
+        prompt = _read_prompt("supplier_assistant_v2.txt")
         input_metadata = {
             "message_count": len(messages),
             "message_lengths": [len(message["content"]) for message in messages],
+            "current_area": current_area,
         }
         with observe_ai_call(
             "supplier.general.assistant", self.settings.active_answer_model
@@ -241,7 +257,14 @@ class OpenAIService:
             ) as generation:
                 response = self.client.beta.chat.completions.parse(
                     model=self.settings.active_answer_model,
-                    messages=[{"role": "system", "content": prompt}, *messages],
+                    messages=[
+                        {"role": "system", "content": prompt},
+                        {
+                            "role": "system",
+                            "content": f"Current application area: {current_area}",
+                        },
+                        *messages,
+                    ],
                     response_format=GeneralAssistantAnswer,
                     temperature=0.2,
                     **self._structured_output_options(),
@@ -258,7 +281,11 @@ class OpenAIService:
                 ai_metrics.input_tokens = result.input_tokens
                 ai_metrics.output_tokens = result.output_tokens
                 generation.update(
-                    output={"answer_chars": len(parsed.answer)},
+                    output={
+                        "answer_chars": len(parsed.answer),
+                        "related": parsed.related,
+                        "navigation_count": len(parsed.navigation),
+                    },
                     usage_details={"input": result.input_tokens, "output": result.output_tokens},
                 )
                 return result

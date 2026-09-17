@@ -193,6 +193,13 @@ class GeneralAssistantMessage(BaseModel):
 
 class GeneralAssistantRequest(BaseModel):
     messages: list[GeneralAssistantMessage] = Field(min_length=1, max_length=12)
+    current_area: Literal[
+        "supplier_portal",
+        "create_supplier_case",
+        "supplier_case",
+        "review_queue",
+        "reviewer_case",
+    ] = "review_queue"
 
 
 class GeneralAssistantRun(BaseModel):
@@ -204,8 +211,15 @@ class GeneralAssistantRun(BaseModel):
     redaction_counts: dict[str, int]
 
 
+class AssistantLink(BaseModel):
+    label: str
+    path: str
+
+
 class GeneralAssistantResponse(BaseModel):
     answer: str
+    related: bool
+    links: list[AssistantLink]
     run: GeneralAssistantRun
 
 

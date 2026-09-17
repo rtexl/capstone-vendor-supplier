@@ -53,6 +53,7 @@ FIELD_SOURCE_PRIORITY: dict[str, tuple[DocumentType, ...]] = {
     "tax_identifier": (DocumentType.TAX, DocumentType.REGISTRATION, DocumentType.INSURANCE),
     "contact_name": (DocumentType.REGISTRATION, DocumentType.TAX, DocumentType.INSURANCE),
     "contact_email": (DocumentType.REGISTRATION, DocumentType.TAX, DocumentType.INSURANCE),
+    "contact_phone": (DocumentType.REGISTRATION, DocumentType.TAX, DocumentType.INSURANCE),
     "insurance_provider": (DocumentType.INSURANCE, DocumentType.REGISTRATION, DocumentType.TAX),
     "insurance_expiry_date": (DocumentType.INSURANCE, DocumentType.REGISTRATION, DocumentType.TAX),
     "payment_terms": (DocumentType.REGISTRATION, DocumentType.TAX, DocumentType.INSURANCE),

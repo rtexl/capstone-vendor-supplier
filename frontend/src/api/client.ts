@@ -4,6 +4,7 @@ import type {
   DecisionResponse,
   DocumentType,
   GeneralAssistantMessage,
+  GeneralAssistantArea,
   GeneralAssistantResponse,
   ProcessSupplierResponse,
   SupplierCreate,
@@ -70,11 +71,11 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question }),
     }),
-  askGeneralAssistant: (messages: GeneralAssistantMessage[]) =>
+  askGeneralAssistant: (messages: GeneralAssistantMessage[], currentArea: GeneralAssistantArea) =>
     request<GeneralAssistantResponse>('/assistant/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({ messages, current_area: currentArea }),
     }),
   runCompliance: (supplierId: string) =>
     request<ComplianceRunResponse>(`/suppliers/${supplierId}/compliance/run`, {

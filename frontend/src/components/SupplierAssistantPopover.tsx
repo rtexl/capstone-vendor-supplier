@@ -1,21 +1,35 @@
 import SupportAgentRoundedIcon from '@mui/icons-material/SupportAgentRounded'
+import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded'
 import { Box, Button, CircularProgress, Fab, Popover, Stack, TextField, Typography } from '@mui/material'
 import { useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import { Link, useLocation } from 'react-router-dom'
+import remarkGfm from 'remark-gfm'
 import { api } from '../api/client'
-import type { GeneralAssistantMessage, GeneralAssistantResponse } from '../api/types'
+import type { GeneralAssistantArea, GeneralAssistantMessage, GeneralAssistantResponse } from '../api/types'
 
 const welcomeMessage: GeneralAssistantMessage = {
   role: 'assistant',
-  content: 'Hi! I can help with general supplier onboarding questions, document preparation, and the review process. I do not read this supplier’s uploaded files.',
+  content: 'Hi! I can explain VendorLens features and workflows, or take you directly to an area of the app. I cannot access supplier-specific data.',
 }
 
 export function SupplierAssistantPopover() {
+  const location = useLocation()
   const [messages, setMessages] = useState<GeneralAssistantMessage[]>([welcomeMessage])
   const [question, setQuestion] = useState('')
   const [asking, setAsking] = useState(false)
   const [run, setRun] = useState<GeneralAssistantResponse['run'] | null>(null)
+  const [links, setLinks] = useState<GeneralAssistantResponse['links']>([])
   const [error, setError] = useState('')
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
+
+  function currentArea(): GeneralAssistantArea {
+    if (location.pathname === '/supplier/new') return 'create_supplier_case'
+    if (location.pathname === '/supplier') return 'supplier_portal'
+    if (location.pathname.startsWith('/supplier/')) return 'supplier_case'
+    if (location.pathname === '/reviewer') return 'review_queue'
+    return 'reviewer_case'
+  }
 
   async function handleSubmit() {
     const trimmedQuestion = question.trim()
@@ -28,10 +42,12 @@ export function SupplierAssistantPopover() {
     setQuestion('')
     setAsking(true)
     setError('')
+    setLinks([])
     try {
-      const result = await api.askGeneralAssistant(nextMessages)
+      const result = await api.askGeneralAssistant(nextMessages, currentArea())
       setMessages((current) => [...current, { role: 'assistant', content: result.answer }])
       setRun(result.run)
+      setLinks(result.links)
     } catch (requestError) {
       setQuestion(trimmedQuestion)
       setError(requestError instanceof Error ? requestError.message : 'The supplier assistant could not answer.')
@@ -44,6 +60,7 @@ export function SupplierAssistantPopover() {
     setMessages([welcomeMessage])
     setQuestion('')
     setRun(null)
+    setLinks([])
     setError('')
   }
 
@@ -87,7 +104,7 @@ export function SupplierAssistantPopover() {
             <Button size="small" onClick={resetChat} disabled={asking}>New chat</Button>
           </Stack>
           <Typography color="text.secondary" variant="caption" display="block" sx={{ mt: 0.75, mb: 1.75 }}>
-            General guidance only. Uploaded supplier documents are not used.
+            Application guidance and navigation only. Supplier records are never shared.
           </Typography>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, maxHeight: 'min(360px, 48vh)', overflowY: 'auto', p: 1.5, bgcolor: 'action.hover', borderRadius: 2 }}>
             {messages.map((message, index) => (
@@ -104,13 +121,60 @@ export function SupplierAssistantPopover() {
                   boxShadow: 1,
                 }}
               >
-                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{message.content}</Typography>
+                {message.role === 'assistant' ? (
+                  <Box
+                    sx={{
+                      fontSize: '0.875rem',
+                      lineHeight: 1.55,
+                      overflowWrap: 'anywhere',
+                      '& p': { m: 0 },
+                      '& p + p': { mt: 1 },
+                      '& h1, & h2, & h3': { fontSize: '0.95rem', lineHeight: 1.35, fontWeight: 750, m: 0, mb: 0.75 },
+                      '& h1:not(:first-of-type), & h2:not(:first-of-type), & h3:not(:first-of-type)': { mt: 1.25 },
+                      '& ul, & ol': { my: 0.75, pl: 2.5 },
+                      '& li': { pl: 0.25 },
+                      '& li + li': { mt: 0.4 },
+                      '& strong': { fontWeight: 750 },
+                      '& code': { px: 0.5, py: 0.15, borderRadius: 0.75, bgcolor: 'action.selected', fontFamily: 'monospace', fontSize: '0.8rem' },
+                      '& pre': { m: 0, mt: 1, p: 1, overflowX: 'auto', borderRadius: 1, bgcolor: 'action.selected' },
+                      '& pre code': { p: 0, bgcolor: 'transparent' },
+                      '& hr': { my: 1, border: 0, borderTop: 1, borderColor: 'divider' },
+                    }}
+                  >
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      skipHtml
+                      components={{ a: ({ children }) => <>{children}</> }}
+                    >
+                      {message.content}
+                    </ReactMarkdown>
+                  </Box>
+                ) : (
+                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{message.content}</Typography>
+                )}
               </Box>
             ))}
             {asking && (
               <Box sx={{ alignSelf: 'flex-start', px: 1.5, py: 1.1 }}>
                 <CircularProgress size={18} />
               </Box>
+            )}
+            {!asking && links.length > 0 && (
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ alignSelf: 'flex-start' }}>
+                {links.map((link) => (
+                  <Button
+                    key={link.path}
+                    component={Link}
+                    to={link.path}
+                    size="small"
+                    variant="outlined"
+                    endIcon={<ArrowForwardRoundedIcon fontSize="small" />}
+                    onClick={() => setAnchorEl(null)}
+                  >
+                    {link.label}
+                  </Button>
+                ))}
+              </Stack>
             )}
           </Box>
           {error && <Typography color="error" variant="caption" display="block" sx={{ mt: 1 }}>{error}</Typography>}
@@ -123,7 +187,7 @@ export function SupplierAssistantPopover() {
               fullWidth
               size="small"
               label="Ask a question"
-              placeholder="What should I prepare?"
+              placeholder="Ask about a feature or where to find it..."
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
               disabled={asking}

@@ -52,6 +52,7 @@ const fieldLabels: Record<string, string> = {
   tax_identifier: 'Tax ID',
   contact_name: 'Contact name',
   contact_email: 'Contact email',
+  contact_phone: 'Contact phone',
   insurance_provider: 'Insurance provider',
   insurance_expiry_date: 'Insurance expiry',
   payment_terms: 'Payment terms',

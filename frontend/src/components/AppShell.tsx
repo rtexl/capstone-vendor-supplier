@@ -49,7 +49,7 @@ export function AppShell() {
       <Container maxWidth="lg" component="main" sx={{ py: { xs: 3, md: 5 } }}>
         <Outlet />
       </Container>
-      {reviewerPortal && <SupplierAssistantPopover />}
+      <SupplierAssistantPopover />
     </Box>
   )
 }

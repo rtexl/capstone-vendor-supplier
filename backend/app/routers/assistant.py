@@ -4,18 +4,47 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import Settings, get_settings
 from app.schemas import (
+    AssistantLink,
     GeneralAssistantRequest,
     GeneralAssistantResponse,
     GeneralAssistantRun,
 )
-from app.services.openai_service import AIConfigurationError, get_openai_service
+from app.services.openai_service import (
+    AIConfigurationError,
+    AssistantNavigationTarget,
+    GeneralAssistantAnswer,
+    get_openai_service,
+)
 from app.services.redaction import redact_pii
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
+OUT_OF_SCOPE_MESSAGE = (
+    "I can only explain VendorLens features, onboarding workflows, and navigation. "
+    "I cannot access or answer questions about supplier-specific data."
+)
+STATIC_ROUTES = {
+    AssistantNavigationTarget.SUPPLIER_PORTAL: "/supplier",
+    AssistantNavigationTarget.CREATE_CASE: "/supplier/new",
+    AssistantNavigationTarget.REVIEW_QUEUE: "/reviewer",
+}
+def _resolve_links(
+    answer: GeneralAssistantAnswer,
+) -> list[AssistantLink]:
+    links: list[AssistantLink] = []
+    seen_paths: set[str] = set()
+    for navigation in answer.navigation:
+        path = STATIC_ROUTES.get(navigation.target)
+        if path and path not in seen_paths:
+            seen_paths.add(path)
+            links.append(AssistantLink(label=navigation.label, path=path))
+    return links
 
 
 @router.post("/chat", response_model=GeneralAssistantResponse)
-def chat(payload: GeneralAssistantRequest, settings: Settings = Depends(get_settings)) -> GeneralAssistantResponse:
+def chat(
+    payload: GeneralAssistantRequest,
+    settings: Settings = Depends(get_settings),
+) -> GeneralAssistantResponse:
     if payload.messages[-1].role != "user":
         raise HTTPException(status_code=422, detail="The last message must be a user question.")
 
@@ -38,13 +67,20 @@ def chat(payload: GeneralAssistantRequest, settings: Settings = Depends(get_sett
             for category, count in redaction.counts.items():
                 redaction_counts[category] = redaction_counts.get(category, 0) + count
         result = ai.answer_general_question(
-            sanitized_messages
+            sanitized_messages,
+            payload.current_area.replace("_", " "),
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail="The supplier assistant could not answer this question.") from exc
 
     return GeneralAssistantResponse(
-        answer=result.value.answer,
+        answer=result.value.answer if result.value.related else OUT_OF_SCOPE_MESSAGE,
+        related=result.value.related,
+        links=(
+            _resolve_links(result.value)
+            if result.value.related
+            else []
+        ),
         run=GeneralAssistantRun(
             model=settings.active_answer_model,
             prompt_version=settings.assistant_prompt_version,
