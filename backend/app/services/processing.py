@@ -116,9 +116,92 @@ def normalize_extracted_value(
 def comparison_key(field_name: str, value: str) -> str:
     """Normalize presentation differences before checking cross-document conflicts."""
     normalized = " ".join(value.casefold().split())
-    if field_name in {"supplier_name", "contact_name", "insurance_provider"}:
+    if field_name in {
+        "supplier_name",
+        "contact_name",
+        "insurance_provider",
+        "address",
+    }:
         normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    elif field_name in {"tax_identifier", "contact_phone"}:
+        normalized = re.sub(r"[^a-z0-9]+", "", normalized)
     return normalized.strip()
+
+
+def values_equivalent(field_name: str, left: str, right: str) -> bool:
+    """Treat harmless aliases and identifier representations as equal."""
+    left_key = comparison_key(field_name, left)
+    right_key = comparison_key(field_name, right)
+    if left_key == right_key:
+        return True
+
+    if field_name == "supplier_name":
+        ignored_name_tokens = {
+            "and",
+            "co",
+            "company",
+            "corp",
+            "corporation",
+            "inc",
+            "incorporated",
+            "limited",
+            "llc",
+            "llp",
+            "ltd",
+            "private",
+            "plc",
+            "pvt",
+        }
+
+        def core_name_tokens(value: str) -> list[str]:
+            return [
+                token
+                for token in value.split()
+                if token and token not in ignored_name_tokens
+            ]
+
+        left_core = core_name_tokens(left_key)
+        right_core = core_name_tokens(right_key)
+        left_tokens = set(left_core)
+        right_tokens = set(right_core)
+        shorter, longer = sorted(
+            (left_tokens, right_tokens),
+            key=len,
+        )
+        # Models occasionally return a document's trading name even when the
+        # full legal name is present. A meaningful two-token alias contained
+        # in the legal name is not a cross-document identity conflict.
+        if len(shorter) >= 2 and shorter.issubset(longer):
+            return True
+
+        def acronym(tokens: list[str]) -> str:
+            return "".join(token[0] for token in tokens)
+
+        left_compact = left_key.replace(" ", "")
+        right_compact = right_key.replace(" ", "")
+        return (
+            len(left_compact) >= 2
+            and len(right_tokens) >= 2
+            and left_compact == acronym(right_core)
+        ) or (
+            len(right_compact) >= 2
+            and len(left_tokens) >= 2
+            and right_compact == acronym(left_core)
+        )
+
+    if field_name == "tax_identifier":
+        # An Indian GSTIN embeds the entity PAN in positions 3-12. Extraction
+        # may return the PAN from a registration form and the GSTIN from the
+        # tax certificate; they identify the same entity and the source
+        # priority still selects the GSTIN as the canonical value.
+        left_upper = left_key.upper()
+        right_upper = right_key.upper()
+        if len(left_upper) == 10 and len(right_upper) == 15:
+            return right_upper[2:12] == left_upper
+        if len(right_upper) == 10 and len(left_upper) == 15:
+            return left_upper[2:12] == right_upper
+
+    return False
 
 
 def select_canonical_fields(
@@ -155,11 +238,10 @@ def select_canonical_fields(
                 comparable_candidates = registration_candidates
 
         chosen = max(comparable_candidates, key=rank)
-        distinct_values = {
-            comparison_key(field_name, candidate.value)
+        has_conflict = any(
+            not values_equivalent(field_name, chosen.value, candidate.value)
             for candidate in comparable_candidates
-        }
-        has_conflict = len(distinct_values) > 1
+        )
         if has_conflict:
             conflicts.append(field_name)
             chosen = FieldCandidate(

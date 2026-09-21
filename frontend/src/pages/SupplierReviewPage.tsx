@@ -5,6 +5,9 @@ import EditRoundedIcon from '@mui/icons-material/EditRounded'
 import FactCheckRoundedIcon from '@mui/icons-material/FactCheckRounded'
 import HowToRegRoundedIcon from '@mui/icons-material/HowToRegRounded'
 import BlockRoundedIcon from '@mui/icons-material/BlockRounded'
+import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded'
+import CloudUploadRoundedIcon from '@mui/icons-material/CloudUploadRounded'
+import OpenInNewRoundedIcon from '@mui/icons-material/OpenInNewRounded'
 import QuestionAnswerRoundedIcon from '@mui/icons-material/QuestionAnswerRounded'
 import ReplayRoundedIcon from '@mui/icons-material/ReplayRounded'
 import {
@@ -22,6 +25,7 @@ import {
   DialogTitle,
   Divider,
   IconButton,
+  LinearProgress,
   Stack,
   TextField,
   Tooltip,
@@ -74,6 +78,12 @@ type FieldConflictDetail = {
   source_document_types: string[]
 }
 
+type ErpTransfer = {
+  phase: 'uploading' | 'complete'
+  durationMs: number
+  erpSupplierId: string
+}
+
 export function SupplierReviewPage() {
   const { supplierId = '' } = useParams()
   const [supplier, setSupplier] = useState<SupplierDetail | null>(null)
@@ -95,6 +105,8 @@ export function SupplierReviewPage() {
   const [changeReasons, setChangeReasons] = useState<Record<string, string>>({})
   const [generalChangeReason, setGeneralChangeReason] = useState('')
   const [requestingChanges, setRequestingChanges] = useState(false)
+  const [erpTransfer, setErpTransfer] = useState<ErpTransfer | null>(null)
+  const [erpProgress, setErpProgress] = useState(0)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
@@ -149,6 +161,37 @@ export function SupplierReviewPage() {
   }, [supplierId])
 
   useEffect(() => { void loadSupplier() }, [loadSupplier])
+
+  const erpTransferPhase = erpTransfer?.phase
+  const erpTransferDuration = erpTransfer?.durationMs
+
+  useEffect(() => {
+    if (erpTransferPhase !== 'uploading' || !erpTransferDuration) return undefined
+
+    const startedAt = Date.now()
+    const progressTimer = window.setInterval(() => {
+      const elapsed = Date.now() - startedAt
+      setErpProgress(Math.min(96, Math.max(4, (elapsed / erpTransferDuration) * 100)))
+    }, 120)
+    const completionTimer = window.setTimeout(() => {
+      window.clearInterval(progressTimer)
+      setErpProgress(100)
+      setErpTransfer((current) => current ? { ...current, phase: 'complete' } : current)
+    }, erpTransferDuration)
+
+    return () => {
+      window.clearInterval(progressTimer)
+      window.clearTimeout(completionTimer)
+    }
+  }, [erpTransferDuration, erpTransferPhase])
+
+  const erpTransferStep = erpProgress < 25
+    ? 'Preparing approved supplier package'
+    : erpProgress < 65
+      ? 'Uploading supplier and document references'
+      : erpProgress < 90
+        ? 'Creating the ERP vendor master record'
+        : 'Verifying the ERP record link'
 
   async function handleProcess() {
     setProcessing(true)
@@ -227,16 +270,26 @@ export function SupplierReviewPage() {
 
   async function handleDecision() {
     if (!decisionAction) return
+    const approving = decisionAction === 'approve'
     setDeciding(true)
     setError('')
     setNotice('')
     try {
-      const result = decisionAction === 'approve'
+      const result = approving
         ? await api.approveSupplier(supplierId)
         : await api.rejectSupplier(supplierId, rejectionReason.trim())
       setDecisionAction(null)
       setRejectionReason('')
-      setNotice(result.message)
+      if (approving) {
+        setErpProgress(4)
+        setErpTransfer({
+          phase: 'uploading',
+          durationMs: 4000 + Math.floor(Math.random() * 3001),
+          erpSupplierId: result.erp_supplier_id ?? 'Pending ERP ID',
+        })
+      } else {
+        setNotice(result.message)
+      }
       await loadSupplier()
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'The decision could not be completed.')
@@ -607,6 +660,82 @@ export function SupplierReviewPage() {
             {deciding ? 'Saving decision...' : decisionAction === 'approve' ? 'Confirm approval' : 'Confirm rejection'}
           </Button>
         </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={erpTransfer !== null}
+        onClose={() => {
+          if (erpTransfer?.phase === 'complete') setErpTransfer(null)
+        }}
+        disableEscapeKeyDown={erpTransfer?.phase === 'uploading'}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogContent sx={{ px: { xs: 3, sm: 5 }, py: 5 }}>
+          {erpTransfer?.phase === 'uploading' ? (
+            <Stack spacing={3} alignItems="center" textAlign="center">
+              <Box
+                sx={{
+                  display: 'grid',
+                  placeItems: 'center',
+                  width: 72,
+                  height: 72,
+                  borderRadius: '50%',
+                  bgcolor: '#EFF6FF',
+                  color: 'primary.main',
+                }}
+              >
+                <CloudUploadRoundedIcon sx={{ fontSize: 38 }} />
+              </Box>
+              <Box>
+                <Typography variant="h5">Uploading to mock ERP</Typography>
+                <Typography color="text.secondary" sx={{ mt: 1 }}>
+                  Keep this window open while VendorLens creates the supplier record.
+                </Typography>
+              </Box>
+              <Box sx={{ width: '100%' }}>
+                <LinearProgress
+                  variant="determinate"
+                  value={erpProgress}
+                  sx={{ height: 9, borderRadius: 999 }}
+                />
+                <Stack direction="row" justifyContent="space-between" sx={{ mt: 1 }}>
+                  <Typography variant="body2" color="text.secondary">{erpTransferStep}</Typography>
+                  <Typography variant="body2" fontWeight={700}>{Math.round(erpProgress)}%</Typography>
+                </Stack>
+              </Box>
+            </Stack>
+          ) : (
+            <Stack spacing={3} alignItems="center" textAlign="center">
+              <CheckCircleRoundedIcon color="success" sx={{ fontSize: 72 }} />
+              <Box>
+                <Typography variant="h5">Supplier uploaded to ERP</Typography>
+                <Typography color="text.secondary" sx={{ mt: 1 }}>
+                  The approved supplier record is now linked to VendorLens.
+                </Typography>
+              </Box>
+              <Box sx={{ width: '100%', p: 2, borderRadius: 2, bgcolor: 'background.default' }}>
+                <Typography variant="caption" color="text.secondary">ERP supplier ID</Typography>
+                <Typography variant="h6">{erpTransfer?.erpSupplierId}</Typography>
+              </Box>
+            </Stack>
+          )}
+        </DialogContent>
+        {erpTransfer?.phase === 'complete' && (
+          <DialogActions sx={{ px: { xs: 3, sm: 5 }, pb: 4 }}>
+            <Button onClick={() => setErpTransfer(null)}>Close</Button>
+            <Button
+              component={Link}
+              to={`/reviewer/${supplierId}/erp`}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="contained"
+              endIcon={<OpenInNewRoundedIcon />}
+            >
+              Open ERP record
+            </Button>
+          </DialogActions>
+        )}
       </Dialog>
 
       <Dialog open={changesOpen} onClose={() => !requestingChanges && setChangesOpen(false)} fullWidth maxWidth="sm">

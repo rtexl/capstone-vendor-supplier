@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from './components/AppShell'
 import { DashboardPage } from './pages/DashboardPage'
+import { MockErpSupplierPage } from './pages/MockErpSupplierPage'
 import { SupplierIntakePage } from './pages/SupplierIntakePage'
 import { SupplierPortalPage } from './pages/SupplierPortalPage'
 import { SupplierReviewPage } from './pages/SupplierReviewPage'
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="supplier/:supplierId" element={<SupplierPortalPage />} />
         <Route path="reviewer" element={<DashboardPage mode="reviewer" />} />
         <Route path="reviewer/:supplierId" element={<SupplierReviewPage />} />
+        <Route path="reviewer/:supplierId/erp" element={<MockErpSupplierPage />} />
         <Route path="*" element={<Navigate to="/supplier" replace />} />
       </Route>
     </Routes>
