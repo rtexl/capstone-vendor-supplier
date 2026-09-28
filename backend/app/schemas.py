@@ -12,6 +12,7 @@ from app.models import (
     ProcessingStatus,
     SupplierStatus,
 )
+from app.services.document_policy import Checklist
 
 
 class SupplierCreate(BaseModel):
@@ -27,14 +28,16 @@ class SupplierSummary(BaseModel):
     name: str
     country: str | None
     contact_email: EmailStr | None
+    category: str | None
+    subcategory: str | None
+    submitted_at: datetime | None
     status: SupplierStatus
     created_at: datetime
     updated_at: datetime
     decision_reason: str | None
     decided_at: datetime | None
     erp_supplier_id: str | None
-    review_round: int
-    change_request: dict | None
+    erp_payload: dict | None = None
     document_count: int = 0
 
 
@@ -47,10 +50,39 @@ class DocumentRead(BaseModel):
     filename: str
     content_type: str
     file_size: int
+    sha256: str | None = None
+    revision: int = 1
     page_count: int
     processing_status: ProcessingStatus
     error_message: str | None
+    text_extraction_method: Literal["native", "ocr", "mixed"] | None = None
+    ocr_pages: list[int] = Field(default_factory=list)
+    ocr_language: str | None = None
+    ocr_warnings: list[str] = Field(default_factory=list)
+    ai_extraction_status: Literal["pending", "processing", "ready", "failed"] = "pending"
+    ai_extraction_error: str | None = None
+    ai_index_status: Literal["pending", "processing", "ready", "failed"] = "pending"
+    ai_index_error: str | None = None
+    review_status: str = "pending"
+    review_comment: str | None = None
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
     created_at: datetime
+
+
+class DocumentRevisionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    supplier_id: uuid.UUID
+    document_type: str
+    revision: int
+    filename: str
+    content_type: str
+    file_size: int
+    sha256: str
+    uploaded_at: datetime
+    archived_at: datetime
 
 
 class AuditEventRead(BaseModel):
@@ -74,6 +106,10 @@ class ExtractedFieldRead(BaseModel):
     page_number: int
     confidence: float
     needs_review: bool
+    review_status: str = "pending"
+    review_comment: str | None = None
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
     created_at: datetime
 
 
@@ -106,16 +142,34 @@ class ComplianceResultRead(BaseModel):
 
 
 class SupplierDetail(SupplierSummary):
+    tax_reference: str | None
+    bank_account_number: str | None
+    bank_ifsc: str | None
+    requirements: Checklist
     documents: list[DocumentRead]
     audit_events: list[AuditEventRead]
     extracted_fields: list[ExtractedFieldRead]
     ai_runs: list[AiRunRead]
     compliance_results: list[ComplianceResultRead]
+    erp_preview: dict
 
 
 class ExtractedFieldUpdate(BaseModel):
     value: str = Field(min_length=1, max_length=1000)
     page_number: int = Field(ge=1)
+    reviewer_name: str = Field(default="Demo reviewer", min_length=2, max_length=100)
+
+
+class ReviewSelectionRequest(BaseModel):
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+    action: Literal["verify", "dispute"]
+    reason: str | None = Field(default=None, max_length=1000)
+    reviewer_name: str = Field(default="Demo reviewer", min_length=2, max_length=100)
+
+
+class EvidenceReviewRequest(BaseModel):
+    action: Literal["verify", "dispute"]
+    reason: str | None = Field(default=None, max_length=1000)
     reviewer_name: str = Field(default="Demo reviewer", min_length=2, max_length=100)
 
 
@@ -135,24 +189,6 @@ class RejectionRequest(BaseModel):
     reviewer_name: str = Field(default="Demo reviewer", min_length=2, max_length=100)
 
 
-class DocumentChangeRequest(BaseModel):
-    document_id: uuid.UUID
-    reason: str = Field(min_length=5, max_length=1000)
-
-
-class ChangesRequest(BaseModel):
-    documents: list[DocumentChangeRequest] = Field(min_length=1, max_length=3)
-    general_reason: str | None = Field(default=None, max_length=1000)
-    reviewer_name: str = Field(default="Demo reviewer", min_length=2, max_length=100)
-
-
-class WorkflowTransitionResponse(BaseModel):
-    supplier_id: uuid.UUID
-    status: SupplierStatus
-    message: str
-    review_round: int
-
-
 class DecisionResponse(BaseModel):
     supplier_id: uuid.UUID
     status: SupplierStatus
@@ -161,11 +197,35 @@ class DecisionResponse(BaseModel):
     decided_at: datetime
 
 
+class ErpValidationResponse(BaseModel):
+    valid: bool
+    errors: list[dict]
+    warnings: list[dict]
+    existing_erp_supplier_id: str | None = None
+    idempotent_replay: bool = False
+
+
+class ErpRecordRead(BaseModel):
+    erp_supplier_id: str
+    supplier_reference: str | None = None
+    source_supplier_id: uuid.UUID
+    legal_name: str
+    tax_reference: str
+    category: str
+    subcategory: str
+    status: str
+    payload: dict
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 class ProcessSupplierResponse(BaseModel):
     run: AiRunRead
     field_count: int
     chunk_count: int
     redaction_counts: dict[str, int]
+    processed_document_count: int = 0
+    failed_document_count: int = 0
 
 
 class SupplierQuestionRequest(BaseModel):
@@ -188,18 +248,11 @@ class SupplierQuestionResponse(BaseModel):
 
 class GeneralAssistantMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=2000)
+    content: str = Field(min_length=1, max_length=8000)
 
 
 class GeneralAssistantRequest(BaseModel):
     messages: list[GeneralAssistantMessage] = Field(min_length=1, max_length=12)
-    current_area: Literal[
-        "supplier_portal",
-        "create_supplier_case",
-        "supplier_case",
-        "review_queue",
-        "reviewer_case",
-    ] = "review_queue"
 
 
 class GeneralAssistantRun(BaseModel):
@@ -211,16 +264,20 @@ class GeneralAssistantRun(BaseModel):
     redaction_counts: dict[str, int]
 
 
-class AssistantLink(BaseModel):
-    label: str
-    path: str
-
-
 class GeneralAssistantResponse(BaseModel):
     answer: str
-    related: bool
-    links: list[AssistantLink]
     run: GeneralAssistantRun
+    citations: list[QuestionCitation] = Field(default_factory=list)
+
+
+class AssistantHistoryMessage(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    role: Literal["user", "assistant"]
+    content: str
+    citations: list[QuestionCitation] = Field(default_factory=list)
+    created_at: datetime
 
 
 class HealthResponse(BaseModel):

@@ -13,3 +13,15 @@ Thumbs.db
 *.log
 *.tmp
 *.temp
+
+backend/.env
+frontend/.env
+frontend/node_modules/
+frontend/dist/
+backend/.venv/
+backend/data/
+backend/uploads/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/

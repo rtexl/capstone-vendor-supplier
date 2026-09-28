@@ -1,8 +1,7 @@
 from dataclasses import dataclass
-from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 
 from openai import AzureOpenAI, OpenAI
 from pydantic import BaseModel, Field
@@ -10,6 +9,7 @@ from pydantic import BaseModel, Field
 from app.config import Settings, get_settings
 from app.metrics import observe_ai_call
 from app.models import DocumentType
+from app.services.document_policy import BASE_TYPES, extraction_field_names, load_policy
 from app.services.tracing import get_langfuse_tracer
 
 
@@ -21,29 +21,29 @@ class AIResponseError(RuntimeError):
     pass
 
 
-class FieldName(str, Enum):
-    SUPPLIER_NAME = "supplier_name"
-    ADDRESS = "address"
-    COUNTRY = "country"
-    TAX_IDENTIFIER = "tax_identifier"
-    CONTACT_NAME = "contact_name"
-    CONTACT_EMAIL = "contact_email"
-    CONTACT_PHONE = "contact_phone"
-    INSURANCE_PROVIDER = "insurance_provider"
-    INSURANCE_EXPIRY_DATE = "insurance_expiry_date"
-    PAYMENT_TERMS = "payment_terms"
-
-
 class ExtractedValue(BaseModel):
-    field_name: FieldName
-    value: str | None
+    field_name: str = Field(min_length=1, max_length=100)
+    value: str | None = Field(
+        default=None,
+        max_length=300,
+        description="A concise scalar copied from the document; never a paragraph or explanation.",
+    )
     page_number: int | None = Field(default=None, ge=1)
     confidence: float = Field(ge=0, le=1)
 
 
+class PolicyCheckAssessment(BaseModel):
+    check_number: int = Field(ge=1, le=2)
+    result: Literal["matched", "not_matched", "human_review"]
+    reason: str = Field(min_length=1, max_length=300)
+    evidence_fields: list[str] = Field(default_factory=list, max_length=12)
+    page_number: int | None = Field(default=None, ge=1)
+
+
 class DocumentExtraction(BaseModel):
     classified_document_type: DocumentType
-    fields: list[ExtractedValue]
+    fields: list[ExtractedValue] = Field(max_length=12)
+    policy_checks: list[PolicyCheckAssessment] = Field(min_length=2, max_length=2)
 
 
 class GroundedAnswer(BaseModel):
@@ -52,21 +52,13 @@ class GroundedAnswer(BaseModel):
     cited_chunk_ids: list[str]
 
 
-class AssistantNavigationTarget(str, Enum):
-    SUPPLIER_PORTAL = "supplier_portal"
-    CREATE_CASE = "create_case"
-    REVIEW_QUEUE = "review_queue"
-
-
-class AssistantNavigation(BaseModel):
-    target: AssistantNavigationTarget
-    label: str = Field(min_length=1, max_length=80)
-
-
 class GeneralAssistantAnswer(BaseModel):
     answer: str = Field(min_length=1, max_length=4000)
-    related: bool = True
-    navigation: list[AssistantNavigation] = Field(default_factory=list, max_length=3)
+
+
+class ReviewerAssistantAnswer(BaseModel):
+    answer: str = Field(min_length=1, max_length=4000)
+    cited_chunk_ids: list[str] = Field(default_factory=list, max_length=8)
 
 
 T = TypeVar("T")
@@ -105,9 +97,27 @@ class OpenAIService:
         redacted_text: str,
     ) -> ModelResult[DocumentExtraction]:
         prompt = _read_prompt("extraction_v4.txt")
+        requirement_id = next((code for code, kind in BASE_TYPES.items() if kind == expected_type), expected_type.value)
+        definition = load_policy().requirements.get(requirement_id)
+        allowed_fields = extraction_field_names(expected_type)
+        if definition:
+            prompt += (f"\nExpected policy item: {requirement_id} ({definition.label})."
+                       f" Accepted evidence: {definition.accepted_evidence}"
+                       f" Required fields: {definition.required_fields}"
+                       f" Policy check 1: {definition.checks[0]}"
+                       f" Policy check 2: {definition.checks[1]}"
+                       f" Return only these exact field_name keys: {', '.join(allowed_fields)}."
+                       " Return every listed key exactly once and do not add other keys."
+                       " Return exactly two policy_checks, numbered 1 and 2."
+                       " Classify a check as matched only when the document contains clear evidence"
+                       " satisfying it, not_matched only for a clear contradiction or threshold"
+                       " failure, and human_review when evidence is missing, ambiguous, subjective,"
+                       " low-confidence, or requires visual authenticity/signature verification."
+                       " Cite only allow-listed field keys in evidence_fields. These are provisional"
+                       " AI findings for a reviewer, never an approval decision.")
         input_metadata = {
             "document_type": expected_type.value,
-            "filename": filename,
+            "file_extension": Path(filename).suffix.lower() or "unknown",
             "text_chars": len(redacted_text),
         }
         with observe_ai_call(
@@ -117,6 +127,11 @@ class OpenAIService:
                 name="supplier.document.extraction",
                 model=self.settings.active_extraction_model,
                 input_data=self.tracer.input_payload(input_metadata, redacted_text),
+                metadata={
+                    **input_metadata,
+                    "prompt_version": self.settings.extraction_prompt_version,
+                    "feature": "document_extraction",
+                },
             ) as generation:
                 response = self.client.beta.chat.completions.parse(
                     model=self.settings.active_extraction_model,
@@ -126,12 +141,13 @@ class OpenAIService:
                             "role": "user",
                             "content": (
                                 f"Expected upload category: {expected_type.value}\n"
-                                f"Filename: {filename}\n\n{redacted_text}"
+                                f"File type: {input_metadata['file_extension']}\n\n{redacted_text}"
                             ),
                         },
                     ],
                     response_format=DocumentExtraction,
                     temperature=0,
+                    max_completion_tokens=self.settings.extraction_max_completion_tokens,
                     **self._structured_output_options(),
                 )
                 parsed = response.choices[0].message.parsed
@@ -148,7 +164,7 @@ class OpenAIService:
                 generation.update(
                     output={
                         "classified_document_type": parsed.classified_document_type.value,
-                        "field_names": [field.field_name.value for field in parsed.fields],
+                        "field_names": [field.field_name for field in parsed.fields],
                         "field_count": len(parsed.fields),
                     },
                     usage_details={"input": result.input_tokens, "output": result.output_tokens},
@@ -166,6 +182,8 @@ class OpenAIService:
                 name="supplier.document.embeddings",
                 model=self.settings.active_embedding_model,
                 input_data=self.tracer.input_payload(input_metadata, texts),
+                metadata={**input_metadata, "feature": "document_embeddings"},
+                observation_type="embedding",
             ) as generation:
                 response = self.client.embeddings.create(
                     model=self.settings.active_embedding_model,
@@ -201,6 +219,11 @@ class OpenAIService:
                 name="supplier.document.question",
                 model=self.settings.active_answer_model,
                 input_data=self.tracer.input_payload(input_metadata, content),
+                metadata={
+                    **input_metadata,
+                    "prompt_version": self.settings.answer_prompt_version,
+                    "feature": "document_question",
+                },
             ) as generation:
                 response = self.client.beta.chat.completions.parse(
                     model=self.settings.active_answer_model,
@@ -239,13 +262,12 @@ class OpenAIService:
     def answer_general_question(
         self,
         messages: list[dict[str, str]],
-        current_area: str,
+        policy_context: str = "",
     ) -> ModelResult[GeneralAssistantAnswer]:
-        prompt = _read_prompt("supplier_assistant_v2.txt")
+        prompt = _read_prompt("supplier_assistant_v2.txt") + "\n\nRETRIEVED POLICY EXCERPTS:\n" + policy_context
         input_metadata = {
             "message_count": len(messages),
             "message_lengths": [len(message["content"]) for message in messages],
-            "current_area": current_area,
         }
         with observe_ai_call(
             "supplier.general.assistant", self.settings.active_answer_model
@@ -254,17 +276,15 @@ class OpenAIService:
                 name="supplier.general.assistant",
                 model=self.settings.active_answer_model,
                 input_data=self.tracer.input_payload(input_metadata, messages),
+                metadata={
+                    **input_metadata,
+                    "prompt_version": self.settings.assistant_prompt_version,
+                    "feature": "supplier_assistant",
+                },
             ) as generation:
                 response = self.client.beta.chat.completions.parse(
                     model=self.settings.active_answer_model,
-                    messages=[
-                        {"role": "system", "content": prompt},
-                        {
-                            "role": "system",
-                            "content": f"Current application area: {current_area}",
-                        },
-                        *messages,
-                    ],
+                    messages=[{"role": "system", "content": prompt}, *messages],
                     response_format=GeneralAssistantAnswer,
                     temperature=0.2,
                     **self._structured_output_options(),
@@ -281,11 +301,54 @@ class OpenAIService:
                 ai_metrics.input_tokens = result.input_tokens
                 ai_metrics.output_tokens = result.output_tokens
                 generation.update(
-                    output={
-                        "answer_chars": len(parsed.answer),
-                        "related": parsed.related,
-                        "navigation_count": len(parsed.navigation),
-                    },
+                    output={"answer_chars": len(parsed.answer)},
+                    usage_details={"input": result.input_tokens, "output": result.output_tokens},
+                )
+                return result
+
+    def answer_reviewer_question(
+        self,
+        messages: list[dict[str, str]],
+        case_context: str,
+    ) -> ModelResult[ReviewerAssistantAnswer]:
+        prompt = _read_prompt("reviewer_assistant_v1.txt") + "\n\nCASE AND RETRIEVED CONTEXT:\n" + case_context
+        input_metadata = {
+            "message_count": len(messages),
+            "message_lengths": [len(message["content"]) for message in messages],
+        }
+        with observe_ai_call(
+            "supplier.reviewer.assistant", self.settings.active_answer_model
+        ) as ai_metrics:
+            with self.tracer.generation(
+                name="supplier.reviewer.assistant",
+                model=self.settings.active_answer_model,
+                input_data=self.tracer.input_payload(input_metadata, messages),
+                metadata={
+                    **input_metadata,
+                    "prompt_version": "reviewer-assistant-v1",
+                    "feature": "reviewer_assistant",
+                },
+            ) as generation:
+                response = self.client.beta.chat.completions.parse(
+                    model=self.settings.active_answer_model,
+                    messages=[{"role": "system", "content": prompt}, *messages],
+                    response_format=ReviewerAssistantAnswer,
+                    temperature=0.2,
+                    **self._structured_output_options(),
+                )
+                parsed = response.choices[0].message.parsed
+                if parsed is None:
+                    raise AIResponseError("The reviewer assistant model returned no structured result.")
+                usage = response.usage
+                result = ModelResult(
+                    value=parsed,
+                    input_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+                    output_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+                )
+                ai_metrics.input_tokens = result.input_tokens
+                ai_metrics.output_tokens = result.output_tokens
+                generation.update(
+                    output={"answer_chars": len(parsed.answer), "citation_intents": len(parsed.cited_chunk_ids)},
                     usage_details={"input": result.input_tokens, "output": result.output_tokens},
                 )
                 return result

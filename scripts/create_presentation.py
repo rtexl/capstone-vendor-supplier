@@ -1,24 +1,30 @@
 from pathlib import Path
+
 from pptx import Presentation
 from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
-from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE, MSO_CONNECTOR
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Inches, Pt
+
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "VendorLens_AI_20_Minute_Presentation.pptx"
 
-NAVY = RGBColor(11, 31, 58)
-BLUE = RGBColor(37, 99, 235)
-TEAL = RGBColor(20, 184, 166)
-VIOLET = RGBColor(124, 58, 237)
-ORANGE = RGBColor(249, 115, 22)
-INK = RGBColor(20, 33, 50)
-MUTED = RGBColor(92, 108, 128)
-PALE = RGBColor(241, 246, 252)
+NAVY = RGBColor(12, 35, 64)
+DEEP = RGBColor(18, 60, 105)
+BLUE = RGBColor(42, 127, 158)
+TEAL = RGBColor(22, 154, 151)
+VIOLET = RGBColor(112, 73, 190)
+ORANGE = RGBColor(224, 126, 39)
+GREEN = RGBColor(45, 134, 89)
+RED = RGBColor(190, 62, 62)
+INK = RGBColor(23, 32, 51)
+MUTED = RGBColor(82, 104, 116)
+PALE = RGBColor(243, 247, 249)
+PALE_BLUE = RGBColor(232, 245, 248)
+PALE_ORANGE = RGBColor(255, 245, 231)
 WHITE = RGBColor(255, 255, 255)
-GREEN = RGBColor(22, 163, 74)
-RED = RGBColor(220, 38, 38)
+LINE = RGBColor(184, 201, 211)
 
 prs = Presentation()
 prs.slide_width = Inches(13.333)
@@ -26,307 +32,422 @@ prs.slide_height = Inches(7.5)
 BLANK = prs.slide_layouts[6]
 
 
-def shape(slide, x, y, w, h, fill, rounded=False, line_color=None):
+def shape(slide, x, y, w, h, fill, rounded=False, line_color=None, line_width=1):
     kind = MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE if rounded else MSO_AUTO_SHAPE_TYPE.RECTANGLE
-    s = slide.shapes.add_shape(kind, Inches(x), Inches(y), Inches(w), Inches(h))
-    s.fill.solid()
-    s.fill.fore_color.rgb = fill
-    s.line.color.rgb = line_color or fill
+    item = slide.shapes.add_shape(kind, Inches(x), Inches(y), Inches(w), Inches(h))
+    item.fill.solid()
+    item.fill.fore_color.rgb = fill
+    item.line.color.rgb = line_color or fill
+    item.line.width = Pt(line_width)
     if rounded:
-        s.adjustments[0] = 0.12
-    return s
+        item.adjustments[0] = 0.12
+    return item
 
 
-def add_text(slide, value, x, y, w, h, size=18, color=INK, bold=False,
-             align=PP_ALIGN.LEFT, font="Aptos", valign=MSO_ANCHOR.TOP):
+def line(slide, x1, y1, x2, y2, color=LINE, width=1.5):
+    item = slide.shapes.add_connector(
+        MSO_CONNECTOR.STRAIGHT,
+        Inches(x1), Inches(y1), Inches(x2), Inches(y2),
+    )
+    item.line.color.rgb = color
+    item.line.width = Pt(width)
+    return item
+
+
+def add_text(
+    slide,
+    value,
+    x,
+    y,
+    w,
+    h,
+    size=18,
+    color=INK,
+    bold=False,
+    align=PP_ALIGN.LEFT,
+    font="Aptos",
+    valign=MSO_ANCHOR.TOP,
+):
     box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
-    tf = box.text_frame
-    tf.clear()
-    tf.word_wrap = True
-    tf.margin_left = Inches(0.04)
-    tf.margin_right = Inches(0.04)
-    tf.margin_top = Inches(0.02)
-    tf.margin_bottom = Inches(0.02)
-    tf.vertical_anchor = valign
-    p = tf.paragraphs[0]
-    p.alignment = align
-    r = p.add_run()
-    r.text = value
-    r.font.name = font
-    r.font.size = Pt(size)
-    r.font.bold = bold
-    r.font.color.rgb = color
+    frame = box.text_frame
+    frame.clear()
+    frame.word_wrap = True
+    frame.margin_left = Inches(0.04)
+    frame.margin_right = Inches(0.04)
+    frame.margin_top = Inches(0.02)
+    frame.margin_bottom = Inches(0.02)
+    frame.vertical_anchor = valign
+    paragraph = frame.paragraphs[0]
+    paragraph.alignment = align
+    run = paragraph.add_run()
+    run.text = value
+    run.font.name = font
+    run.font.size = Pt(size)
+    run.font.bold = bold
+    run.font.color.rgb = color
     return box
 
 
-def bullets(slide, items, x, y, w, h, size=15, color=INK):
-    return add_text(slide, "\n".join("• " + item for item in items), x, y, w, h,
-                    size=size, color=color)
+def bullets(slide, items, x, y, w, h, size=15, color=INK, gap=0.0):
+    box = add_text(slide, "", x, y, w, h, size=size, color=color)
+    frame = box.text_frame
+    frame.clear()
+    for index, item in enumerate(items):
+        paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
+        paragraph.text = f"•  {item}"
+        paragraph.font.name = "Aptos"
+        paragraph.font.size = Pt(size)
+        paragraph.font.color.rgb = color
+        paragraph.space_after = Pt(gap)
+    return box
 
 
 def footer(slide, number, timing):
     shape(slide, 0, 7.1, 13.333, 0.4, NAVY)
-    add_text(slide, "VendorLens AI", 0.65, 7.18, 2.2, 0.16, 8.5, RGBColor(195, 214, 234), True)
-    add_text(slide, timing, 4.6, 7.18, 4.1, 0.16, 8.5, RGBColor(195, 214, 234), False, PP_ALIGN.CENTER)
-    add_text(slide, f"{number:02d}", 12.1, 7.18, 0.55, 0.16, 9, RGBColor(136, 190, 255), True, PP_ALIGN.RIGHT)
+    add_text(slide, "VendorLens AI", 0.65, 7.18, 2.2, 0.16, 8.5, RGBColor(199, 220, 232), True)
+    add_text(slide, timing, 4.4, 7.18, 4.5, 0.16, 8.5, RGBColor(199, 220, 232), False, PP_ALIGN.CENTER)
+    add_text(slide, f"{number:02d}", 12.05, 7.18, 0.6, 0.16, 9, RGBColor(143, 207, 226), True, PP_ALIGN.RIGHT)
 
 
 def title(slide, kicker, heading, subtitle, number, timing):
     shape(slide, 0, 0, 13.333, 7.5, WHITE)
     shape(slide, 0, 0, 13.333, 0.14, BLUE)
-    add_text(slide, kicker.upper(), 0.7, 0.45, 3.2, 0.22, 10.5, BLUE, True)
-    add_text(slide, heading, 0.7, 0.78, 11.7, 0.58, 29, NAVY, True, font="Aptos Display")
-    add_text(slide, subtitle, 0.72, 1.48, 11.6, 0.3, 13.5, MUTED)
+    add_text(slide, kicker.upper(), 0.7, 0.43, 3.9, 0.22, 10.5, BLUE, True)
+    add_text(slide, heading, 0.7, 0.76, 11.9, 0.58, 28, NAVY, True, font="Aptos Display")
+    add_text(slide, subtitle, 0.72, 1.45, 11.7, 0.42, 13, MUTED)
     footer(slide, number, timing)
 
 
-def clear_slide(slide):
-    """Remove generated content when a slide needs a final client-facing variant."""
-    for shape_obj in list(slide.shapes):
-        shape_obj._element.getparent().remove(shape_obj._element)
+def label(slide, value, x, y, w, color=BLUE):
+    shape(slide, x, y, w, 0.34, color, True)
+    add_text(slide, value.upper(), x, y + 0.08, w, 0.15, 9.5, WHITE, True, PP_ALIGN.CENTER)
 
 
-# Slide 1: title
+def card(slide, x, y, w, h, heading, body, accent=BLUE, fill=PALE):
+    shape(slide, x, y, w, h, fill, True, RGBColor(214, 226, 232))
+    shape(slide, x, y, 0.08, h, accent, True, accent)
+    add_text(slide, heading, x + 0.25, y + 0.22, w - 0.45, 0.27, 16, NAVY, True)
+    add_text(slide, body, x + 0.25, y + 0.62, w - 0.45, h - 0.78, 11.2, MUTED)
+
+
+# 1 — opening
 slide = prs.slides.add_slide(BLANK)
 shape(slide, 0, 0, 13.333, 7.5, NAVY)
 shape(slide, 0, 0, 13.333, 0.16, ORANGE)
-shape(slide, 9.0, 0.16, 4.333, 7.34, RGBColor(15, 43, 76))
-add_text(slide, "VendorLens AI", 0.82, 1.2, 7.2, 0.65, 40, WHITE, True, font="Aptos Display")
-add_text(slide, "From supplier documents to an\nauditable onboarding decision", 0.86, 2.12, 7.6, 1.05, 27, RGBColor(215, 229, 244), True, font="Aptos Display")
-add_text(slide, "AI-assisted supplier onboarding and compliance review", 0.88, 3.55, 7.3, 0.28, 16, ORANGE, True)
-add_text(slide, "React • FastAPI • PostgreSQL • ChromaDB • Azure OpenAI", 0.88, 5.78, 7.6, 0.22, 11, RGBColor(174, 201, 228))
-add_text(slide, "Human confirmation remains mandatory", 0.88, 6.22, 7.6, 0.22, 10.5, RGBColor(174, 201, 228))
-for i, (label, color) in enumerate([("INTAKE", BLUE), ("RAG", TEAL), ("REVIEW", VIOLET), ("OBSERVE", ORANGE)]):
-    y = 1.25 + i * 1.25
-    shape(slide, 9.55, y, 2.85, 0.66, color, True)
-    add_text(slide, label, 9.55, y + 0.18, 2.85, 0.22, 16, WHITE, True, PP_ALIGN.CENTER)
-footer(slide, 1, "Opening | 0:00-0:45")
+shape(slide, 8.8, 0.16, 4.533, 7.34, RGBColor(16, 53, 88))
+add_text(slide, "VendorLens AI", 0.82, 1.08, 7.25, 0.72, 42, WHITE, True, font="Aptos Display")
+add_text(
+    slide,
+    "Evidence-led supplier onboarding\nwith human approval",
+    0.86, 2.02, 7.5, 1.18, 28, RGBColor(218, 235, 245), True, font="Aptos Display",
+)
+add_text(slide, "From application and documents to an auditable ERP record", 0.88, 3.55, 7.25, 0.32, 15.5, ORANGE, True)
+add_text(
+    slide,
+    "React 19  •  FastAPI  •  PostgreSQL 18  •  ChromaDB  •  Tesseract  •  OpenRouter / Azure OpenAI",
+    0.88, 5.77, 7.55, 0.45, 10.5, RGBColor(177, 207, 225),
+)
+add_text(slide, "As-built demo baseline  •  September 2026", 0.88, 6.28, 6.5, 0.22, 10, RGBColor(177, 207, 225))
+for index, (name, color, note) in enumerate([
+    ("SUPPLIER", BLUE, "apply + upload"),
+    ("REVIEWER", VIOLET, "verify + decide"),
+    ("ADMIN", ORANGE, "observe + maintain"),
+    ("ERP", GREEN, "validate + create"),
+]):
+    y = 1.05 + index * 1.27
+    shape(slide, 9.38, y, 3.05, 0.82, color, True)
+    add_text(slide, name, 9.38, y + 0.14, 3.05, 0.22, 15, WHITE, True, PP_ALIGN.CENTER)
+    add_text(slide, note, 9.38, y + 0.48, 3.05, 0.16, 9.2, RGBColor(229, 242, 249), False, PP_ALIGN.CENTER)
+footer(slide, 1, "Opening | 0:00–0:40")
 
 
-# Slide 2: problem and solution
+# 2 — product and users
 slide = prs.slides.add_slide(BLANK)
-title(slide, "Problem + solution", "Reduce review effort without giving AI the final vote",
-      "The application automates repetitive understanding while preserving evidence, rules, and human accountability.", 2, "Problem & business case | 0:45-4:00")
-shape(slide, 0.78, 2.15, 5.45, 4.4, NAVY, True)
-add_text(slide, "THE PROBLEM", 1.1, 2.5, 2.0, 0.22, 11, ORANGE, True)
-add_text(slide, "Supplier onboarding is a document bottleneck", 1.1, 2.88, 4.4, 0.62, 23, WHITE, True, font="Aptos Display")
+title(
+    slide,
+    "Product",
+    "One workflow, three workspaces, one accountable decision",
+    "VendorLens replaces disconnected forms, files, searches, and handoffs with a traceable case record.",
+    2,
+    "Problem + product | 0:40–2:30",
+)
+roles = [
+    (0.72, "Supplier portal", "Register • classify service\nUpload dynamic checklist\nSubmit • correct • resubmit\nAsk scoped onboarding questions", BLUE),
+    (4.49, "Reviewer workbench", "Inspect originals + history\nVerify/correct AI fields\nRun policy checks + case chat\nApprove or reject", VIOLET),
+    (8.26, "Administrator", "Manage demo profiles\nReset access safely\nInspect AI, OCR, RAG and ERP\noperational metrics", ORANGE),
+]
+for x, head, body, accent in roles:
+    shape(slide, x, 2.18, 3.42, 3.34, WHITE, True, accent, 1.6)
+    shape(slide, x, 2.18, 3.42, 0.62, accent, True)
+    add_text(slide, head, x + 0.14, 2.38, 3.14, 0.22, 17, WHITE, True, PP_ALIGN.CENTER)
+    bullets(slide, body.split("\n"), x + 0.28, 3.08, 2.95, 1.9, 13, INK, 7)
+label(slide, "Non-negotiable", 5.15, 5.83, 1.55, RED)
+add_text(slide, "AI assists; the reviewer remains the decision-maker.", 3.18, 6.31, 6.95, 0.28, 16, NAVY, True, PP_ALIGN.CENTER)
+
+
+# 3 — lifecycle
+slide = prs.slides.add_slide(BLANK)
+title(
+    slide,
+    "Lifecycle",
+    "The complete as-built supplier journey",
+    "Readability, AI processing, evidence review, compliance, and approval are separate states—not one opaque score.",
+    3,
+    "Workflow | 2:30–4:10",
+)
+steps = [
+    ("1", "Classify", "8 categories\n24 subcategories", BLUE),
+    ("2", "Collect", "3 baseline +\npolicy evidence", TEAL),
+    ("3", "Read", "native text +\nselective OCR", ORANGE),
+    ("4", "Understand", "redact • extract\nembed • cite", VIOLET),
+    ("5", "Review", "originals • fields\nchecks • feedback", DEEP),
+    ("6", "Decide", "all checks PASS\nexplicit reviewer", GREEN),
+    ("7", "Create", "idempotent\nERP record", NAVY),
+]
+for index, (num, head, body, accent) in enumerate(steps):
+    x = 0.46 + index * 1.82
+    shape(slide, x, 2.35, 1.48, 2.2, WHITE, True, accent, 1.4)
+    shape(slide, x + 0.48, 2.1, 0.52, 0.52, accent, True)
+    add_text(slide, num, x + 0.48, 2.24, 0.52, 0.16, 11, WHITE, True, PP_ALIGN.CENTER)
+    add_text(slide, head, x + 0.08, 2.86, 1.32, 0.23, 14.5, NAVY, True, PP_ALIGN.CENTER)
+    add_text(slide, body, x + 0.1, 3.38, 1.28, 0.63, 10.2, MUTED, False, PP_ALIGN.CENTER)
+    if index < len(steps) - 1:
+        add_text(slide, "→", x + 1.51, 3.14, 0.3, 0.28, 17, LINE, True, PP_ALIGN.CENTER)
+shape(slide, 1.14, 5.15, 4.65, 0.95, PALE_ORANGE, True, ORANGE)
+add_text(slide, "Correction loop", 1.38, 5.36, 1.45, 0.22, 15, ORANGE, True)
+add_text(slide, "flag evidence → supplier replaces → resubmit", 2.8, 5.36, 2.65, 0.25, 11.2, MUTED)
+shape(slide, 6.4, 5.15, 5.75, 0.95, PALE_BLUE, True, BLUE)
+add_text(slide, "Submission survives AI failure", 6.68, 5.36, 2.72, 0.22, 15, BLUE, True)
+add_text(slide, "safe failure state + reviewer retry", 9.45, 5.36, 2.3, 0.25, 11.2, MUTED)
+
+
+# 4 — architecture
+slide = prs.slides.add_slide(BLANK)
+title(
+    slide,
+    "Architecture",
+    "Application components with explicit trust boundaries",
+    "Compose runs frontend, backend, PostgreSQL and mock ERP; Chroma is embedded persistence and AI is external.",
+    4,
+    "Architecture | 4:10–6:20",
+)
+components = [
+    (0.72, 2.28, 2.2, "React / Nginx", "role UI\n/api reverse proxy", BLUE),
+    (3.65, 2.08, 2.6, "FastAPI", "auth • workflow • OCR\nAI • policy • audit", TEAL),
+    (9.92, 2.08, 2.45, "AI provider", "OpenRouter or Azure\nexternal boundary", ORANGE),
+    (1.7, 4.18, 2.48, "PostgreSQL", "business source of truth\ncases • runs • audit", DEEP),
+    (5.08, 4.18, 2.48, "ChromaDB", "embedded persistent client\nsupplier-filtered vectors", VIOLET),
+    (8.46, 4.18, 2.48, "Mock ERP MCP", "separate JSON-RPC service\nvalidate • create • get • list", GREEN),
+]
+for x, y, w, head, body, accent in components:
+    shape(slide, x, y, w, 1.32, accent, True)
+    add_text(slide, head, x, y + 0.22, w, 0.24, 15, WHITE, True, PP_ALIGN.CENTER)
+    add_text(slide, body, x + 0.08, y + 0.62, w - 0.16, 0.42, 9.2, RGBColor(230, 243, 249), False, PP_ALIGN.CENTER)
+add_text(slide, "→", 3.05, 2.58, 0.36, 0.28, 20, BLUE, True, PP_ALIGN.CENTER)
+add_text(slide, "→", 7.92, 2.5, 0.36, 0.28, 20, ORANGE, True, PP_ALIGN.CENTER)
+line(slide, 6.25, 2.73, 7.88, 2.73, TEAL, 2)
+line(slide, 4.95, 3.42, 2.95, 4.12, DEEP, 2)
+line(slide, 4.95, 3.42, 6.32, 4.12, VIOLET, 2)
+line(slide, 4.95, 3.42, 9.68, 4.12, GREEN, 2)
+shape(slide, 0.86, 5.77, 1.55, 0.38, NAVY, True)
+add_text(slide, "UPLOAD VOLUME", 0.86, 5.88, 1.55, 0.15, 9.1, WHITE, True, PP_ALIGN.CENTER)
+add_text(slide, "UUID files • SHA-256 • revisions", 2.58, 5.86, 2.58, 0.19, 10.2, MUTED)
+label(slide, "Provider rule", 6.18, 5.79, 1.32, ORANGE)
+add_text(slide, "No silent cross-provider failover.", 7.72, 5.84, 4.05, 0.24, 12.3, NAVY, True)
+
+
+# 5 — document AI
+slide = prs.slides.add_slide(BLANK)
+title(
+    slide,
+    "Document AI + RAG",
+    "Readable evidence in; traceable facts and answers out",
+    "OCR provenance, typed PII placeholders, page-local chunks, and citation validation make model output inspectable.",
+    5,
+    "AI pipeline | 6:20–8:10",
+)
+pipeline = [
+    (0.65, "READ", "PDF / PNG / JPEG / TXT\nnative • mixed • OCR", ORANGE),
+    (3.05, "REDACT", "GSTIN • PAN • CIN\nemail • phone • bank", RED),
+    (5.45, "EXTRACT", "allow-listed fields\npage • confidence • conflicts", TEAL),
+    (7.85, "INDEX", "500 tokens • 75 overlap\nnever crosses a page", VIOLET),
+    (10.25, "ANSWER", "top 4 • distance 0.72\ncitation or exact not-found", BLUE),
+]
+for index, (x, head, body, accent) in enumerate(pipeline):
+    shape(slide, x, 2.18, 2.05, 1.78, WHITE, True, accent, 1.5)
+    label(slide, head, x + 0.42, 2.42, 1.21, accent)
+    add_text(slide, body, x + 0.17, 3.08, 1.71, 0.53, 10.2, MUTED, False, PP_ALIGN.CENTER)
+    if index < len(pipeline) - 1:
+        add_text(slide, "→", x + 2.07, 2.9, 0.28, 0.28, 17, LINE, True, PP_ALIGN.CENTER)
+card(slide, 0.78, 4.52, 3.68, 1.24, "Supplier isolation", "Every vector query filters by supplier ID before similarity ranking.", VIOLET, PALE)
+card(slide, 4.82, 4.52, 3.68, 1.24, "Human-readable provenance", "Original filename, page, OCR method, confidence, review state and citation.", TEAL, PALE)
+card(slide, 8.86, 4.52, 3.68, 1.24, "Versioned behavior", "extraction-v4 • rag-answer-v3 • supplier-assistant-v2", BLUE, PALE)
+add_text(slide, "AI failure is diagnosable by document, stage, model, prompt, tokens and latency.", 1.15, 6.25, 11.05, 0.26, 14, NAVY, True, PP_ALIGN.CENTER)
+
+
+# 6 — review, policy and ERP
+slide = prs.slides.add_slide(BLANK)
+title(
+    slide,
+    "Controls",
+    "Calculated findings remain visible; reviewers own the outcome",
+    "The policy engine separates model evidence, deterministic checks, reviewer verification, and downstream creation.",
+    6,
+    "Review + ERP | 8:10–10:05",
+)
+shape(slide, 0.78, 2.13, 3.52, 3.7, PALE_BLUE, True, BLUE)
+add_text(slide, "Policy catalogue", 1.08, 2.46, 2.6, 0.3, 20, BLUE, True, font="Aptos Display")
+add_text(slide, "8", 1.1, 3.06, 0.85, 0.5, 30, NAVY, True)
+add_text(slide, "categories", 1.72, 3.19, 1.3, 0.22, 12, MUTED)
+add_text(slide, "24", 1.1, 3.77, 0.85, 0.5, 30, NAVY, True)
+add_text(slide, "subcategories", 1.92, 3.9, 1.45, 0.22, 12, MUTED)
+add_text(slide, "22", 1.1, 4.48, 0.85, 0.5, 30, NAVY, True)
+add_text(slide, "reusable requirements", 1.92, 4.61, 1.83, 0.22, 12, MUTED)
+add_text(slide, "Checklist is frozen at first submission", 1.08, 5.32, 2.85, 0.25, 11.2, BLUE, True)
+shape(slide, 4.72, 2.13, 3.7, 3.7, WHITE, True, VIOLET, 1.5)
+add_text(slide, "Approval gate", 5.02, 2.46, 2.6, 0.3, 20, VIOLET, True, font="Aptos Display")
 bullets(slide, [
-    "facts are spread across registration, tax, and insurance files",
-    "follow-up questions require manual searching",
-    "PII can leak into prompts or ad-hoc logs",
-    "completeness and expiry checks are easy to miss",
-], 1.1, 3.78, 4.45, 1.9, 15, RGBColor(220, 235, 249))
-shape(slide, 6.55, 2.15, 5.95, 4.4, PALE, True, RGBColor(220, 230, 241))
-add_text(slide, "THE SOLUTION", 6.9, 2.5, 2.0, 0.22, 11, BLUE, True)
-add_text(slide, "One controlled workflow", 6.9, 2.88, 4.3, 0.42, 23, NAVY, True, font="Aptos Display")
-flow = [
-    ("1", "Intake", "Upload three required documents", BLUE),
-    ("2", "AI", "Redact, extract, embed, retrieve", TEAL),
-    ("3", "Review", "Citations + deterministic checks", VIOLET),
-    ("4", "Decision", "Human approval → ERP handoff", ORANGE),
-]
-for i, (num, head, desc, accent) in enumerate(flow):
-    y = 3.58 + i * 0.62
-    shape(slide, 6.9, y, 0.38, 0.38, accent, True)
-    add_text(slide, num, 6.9, y + 0.09, 0.38, 0.16, 11, WHITE, True, PP_ALIGN.CENTER)
-    add_text(slide, head, 7.5, y + 0.01, 1.0, 0.2, 14, NAVY, True)
-    add_text(slide, desc, 8.45, y + 0.01, 3.4, 0.2, 11.5, MUTED)
-add_text(slide, "AI suggests → rules explain → reviewer confirms", 6.9, 6.05, 5.0, 0.24, 15, BLUE, True)
+    "required readable evidence exists",
+    "numbered policy checks verified",
+    "no disputed documents or fields",
+    "all extracted values reviewed",
+    "every compliance result = PASS",
+], 5.04, 3.06, 3.05, 2.13, 12.2, INK, 7)
+add_text(slide, "Reviewer clicks Approve", 5.04, 5.34, 2.95, 0.25, 12, VIOLET, True, PP_ALIGN.CENTER)
+shape(slide, 8.84, 2.13, 3.7, 3.7, PALE, True, GREEN)
+add_text(slide, "ERP handoff", 9.14, 2.46, 2.6, 0.3, 20, GREEN, True, font="Aptos Display")
+bullets(slide, [
+    "reviewed values preferred",
+    "validate required data + duplicates",
+    "case ID is idempotency key",
+    "safe retry if service is unavailable",
+    "sanitized attempt audit",
+], 9.16, 3.06, 3.05, 2.13, 12.2, INK, 7)
+add_text(slide, "APPROVED only after ERP create/replay", 9.06, 5.34, 3.3, 0.25, 11.2, GREEN, True, PP_ALIGN.CENTER)
+add_text(slide, "AI match → NEEDS REVIEW     •     Reviewer verification → PASS", 2.0, 6.29, 9.3, 0.26, 14.5, NAVY, True, PP_ALIGN.CENTER)
 
 
-# Slide 3: architecture and tools
+# 7 — live demo handoff
 slide = prs.slides.add_slide(BLANK)
-title(slide, "Architecture + tools", "A simple request path with an explicit control plane",
-      "The application path is synchronous; evaluation, tracing, and monitoring observe the same running system.", 3, "Architecture & tools | 4:00-8:00")
-# architecture flow
-boxes = [
-    (0.78, "React + MUI", "dashboard • intake • review", BLUE),
-    (3.25, "FastAPI", "REST • validation • audit", TEAL),
-    (5.75, "AI services", "redact • extract • retrieve", NAVY),
-    (8.35, "Azure OpenAI", "gpt-4o-mini • embeddings", ORANGE),
-    (10.85, "ChromaDB", "supplier-filtered vectors", VIOLET),
-]
-for i, (x, head, desc, accent) in enumerate(boxes):
-    shape(slide, x, 2.05, 2.0, 0.95, accent, True)
-    add_text(slide, head, x, 2.27, 2.0, 0.23, 15, WHITE, True, PP_ALIGN.CENTER)
-    add_text(slide, desc, x + 0.08, 2.62, 1.84, 0.16, 8.8, RGBColor(226, 239, 252), False, PP_ALIGN.CENTER)
-    if i < len(boxes) - 1:
-        add_text(slide, "→", x + 2.06, 2.32, 0.35, 0.25, 20, accent, True, PP_ALIGN.CENTER)
-shape(slide, 2.2, 3.55, 3.95, 1.05, PALE, True, RGBColor(220, 230, 241))
-add_text(slide, "PostgreSQL", 2.48, 3.8, 1.5, 0.22, 17, NAVY, True)
-add_text(slide, "suppliers • documents • AI runs • compliance • audit", 2.48, 4.16, 3.3, 0.18, 10.5, MUTED)
-shape(slide, 7.0, 3.55, 4.15, 1.05, PALE, True, RGBColor(220, 230, 241))
-add_text(slide, "Quality + operations", 7.28, 3.8, 2.2, 0.22, 17, NAVY, True)
-add_text(slide, "Langfuse • Promptfoo • Prometheus", 7.28, 4.16, 3.0, 0.18, 10.5, MUTED)
-add_text(slide, "Tool choices", 0.82, 5.15, 1.45, 0.23, 16, NAVY, True)
-add_text(slide, "ChromaDB = low-permission deployment  |  gpt-4o-mini = cost/latency  |  rules = explainable decisions", 2.45, 5.15, 9.7, 0.24, 13, MUTED)
-add_text(slide, "Privacy: PII is redacted before applicable LLM calls; telemetry labels never contain supplier data.", 0.82, 5.92, 11.6, 0.25, 14, ORANGE, True)
-
-# Replace the draft architecture with a single readable system flow.
-clear_slide(slide)
-title(slide, "Architecture + tools", "From intake to an auditable decision",
-      "The same controlled path supports document processing, supplier Q&A, compliance, and operations.", 3, "Architecture & tools | 4:00-8:00")
-
-flow_boxes = [
-    (0.75, 2.15, 2.2, "React + MUI", "Intake • review • Q&A", BLUE),
-    (3.45, 2.15, 2.2, "FastAPI", "API • validation • audit", TEAL),
-    (6.15, 2.15, 2.45, "Workflow services", "redact • extract • retrieve", NAVY),
-    (9.2, 2.15, 2.45, "Azure OpenAI", "GPT-4o-mini • embeddings", ORANGE),
-]
-for index, (x, y, width, head, desc, accent) in enumerate(flow_boxes):
-    shape(slide, x, y, width, 0.86, accent, True)
-    add_text(slide, head, x, y + 0.18, width, 0.22, 15, WHITE, True, PP_ALIGN.CENTER)
-    add_text(slide, desc, x + 0.08, y + 0.5, width - 0.16, 0.15, 9, RGBColor(226, 239, 252), False, PP_ALIGN.CENTER)
-    if index < len(flow_boxes) - 1:
-        add_text(slide, "→", x + width + 0.2, y + 0.27, 0.35, 0.25, 20, accent, True, PP_ALIGN.CENTER)
-
-add_text(slide, "↓", 4.35, 3.12, 0.3, 0.25, 20, TEAL, True, PP_ALIGN.CENTER)
-add_text(slide, "↓", 6.95, 3.12, 0.3, 0.25, 20, NAVY, True, PP_ALIGN.CENTER)
-add_text(slide, "↓", 10.2, 3.12, 0.3, 0.25, 20, ORANGE, True, PP_ALIGN.CENTER)
-
-branches = [
-    (1.1, 3.65, 3.0, "PostgreSQL", "supplier records • AI runs • compliance • audit", BLUE),
-    (4.85, 3.65, 3.0, "ChromaDB", "supplier-scoped chunks and embeddings", VIOLET),
-    (8.6, 3.65, 3.0, "Observability", "Langfuse • Promptfoo • Prometheus", ORANGE),
-]
-for x, y, width, head, desc, accent in branches:
-    shape(slide, x, y, width, 0.92, PALE, True, accent)
-    add_text(slide, head, x + 0.12, y + 0.18, width - 0.24, 0.22, 15, NAVY, True, PP_ALIGN.CENTER)
-    add_text(slide, desc, x + 0.12, y + 0.52, width - 0.24, 0.16, 9.5, MUTED, False, PP_ALIGN.CENTER)
-
-add_text(slide, "↓", 2.55, 4.82, 0.3, 0.25, 20, BLUE, True, PP_ALIGN.CENTER)
-add_text(slide, "↓", 6.3, 4.82, 0.3, 0.25, 20, VIOLET, True, PP_ALIGN.CENTER)
-shape(slide, 2.35, 5.25, 3.6, 0.82, NAVY, True)
-add_text(slide, "Compliance rules + audit trail", 2.35, 5.5, 3.6, 0.22, 14, WHITE, True, PP_ALIGN.CENTER)
-shape(slide, 7.2, 5.25, 3.8, 0.82, GREEN, True)
-add_text(slide, "Human decision → ERP handoff", 7.2, 5.5, 3.8, 0.22, 14, WHITE, True, PP_ALIGN.CENTER)
-add_text(slide, "→", 6.25, 5.49, 0.45, 0.25, 20, ORANGE, True, PP_ALIGN.CENTER)
-add_text(slide, "AI suggests • rules explain • reviewer confirms", 3.25, 6.35, 6.9, 0.22, 14, BLUE, True, PP_ALIGN.CENTER)
-
-
-# Slide 4: demo
-slide = prs.slides.add_slide(BLANK)
-title(slide, "Live demo", "One supplier, one complete decision path",
-      "Use the synthetic Kaveri Flow Controls pack. Keep the browser, backend terminal, and Prometheus UI ready.", 4, "Live demo | 8:00-15:00")
+title(
+    slide,
+    "Live demo",
+    "Follow one case across all trust boundaries",
+    "The walkthrough proves both the happy path and the controls that prevent unsupported automation.",
+    7,
+    "Live walkthrough | 10:05–15:40",
+)
 demo = [
-    ("01", "Create", "Supplier name, country, optional email", BLUE),
-    ("02", "Upload", "Registration + tax + insurance; show replace/delete", TEAL),
-    ("03", "Process", "PII redaction → fields → chunks", VIOLET),
-    ("04", "Ask", "Cited answer + absent bank balance → not found", ORANGE),
-    ("05", "Review", "Correct one field; rerun compliance", NAVY),
-    ("06", "Decide", "Approve → mock ERP ID + audit event", GREEN),
+    ("01", "Supplier", "Register or sign in; complete India-based details and choose a subcategory.", BLUE),
+    ("02", "Evidence", "Show dynamic checklist; upload native and scanned evidence; open OCR provenance.", ORANGE),
+    ("03", "Submit", "Freeze the checklist and observe background extraction/index status.", TEAL),
+    ("04", "Reviewer", "Open original/page, inspect mismatch, ask the case assistant, verify/correct evidence.", VIOLET),
+    ("05", "Compliance", "Run checks; show why unresolved items block approval; verify to reach all PASS.", DEEP),
+    ("06", "ERP + admin", "Approve, retrieve the ERP record, then show AI/OCR/ERP observability.", GREEN),
 ]
-for i, (num, head, desc, accent) in enumerate(demo):
-    y = 2.05 + i * 0.67
-    shape(slide, 0.95, y, 0.52, 0.46, accent, True)
-    add_text(slide, num, 0.95, y + 0.13, 0.52, 0.16, 11, WHITE, True, PP_ALIGN.CENTER)
-    add_text(slide, head, 1.85, y + 0.1, 1.25, 0.22, 16, NAVY, True)
-    add_text(slide, desc, 3.35, y + 0.1, 7.55, 0.22, 13, MUTED)
-    if i < 5:
-        add_text(slide, "↓", 1.11, y + 0.47, 0.2, 0.18, 14, RGBColor(170, 187, 207), True, PP_ALIGN.CENTER)
-shape(slide, 0.95, 6.25, 11.15, 0.45, RGBColor(239, 246, 255), True, RGBColor(191, 219, 254))
-add_text(slide, "Fallback: use QUALITY_EVALUATION.md and latest results if an external AI call is slow.", 1.2, 6.38, 10.65, 0.18, 11.5, BLUE, True, PP_ALIGN.CENTER)
-
-# Keep the hand-off slide intentionally minimal; the application is shown live.
-clear_slide(slide)
-shape(slide, 0, 0, 13.333, 7.5, PALE)
-shape(slide, 0, 0, 13.333, 0.16, VIOLET)
-add_text(slide, "Live demo", 0.82, 2.45, 11.7, 0.9, 54, NAVY, True, PP_ALIGN.CENTER, font="Aptos Display", valign=MSO_ANCHOR.MIDDLE)
-footer(slide, 4, "Live walkthrough | 8:00-15:00")
+for index, (num, head, body, accent) in enumerate(demo):
+    row = index // 2
+    col = index % 2
+    x = 0.78 + col * 6.15
+    y = 2.08 + row * 1.34
+    shape(slide, x, y, 5.66, 1.03, WHITE, True, accent, 1.3)
+    shape(slide, x + 0.2, y + 0.22, 0.56, 0.56, accent, True)
+    add_text(slide, num, x + 0.2, y + 0.39, 0.56, 0.16, 10.5, WHITE, True, PP_ALIGN.CENTER)
+    add_text(slide, head, x + 0.96, y + 0.18, 1.3, 0.24, 15, NAVY, True)
+    add_text(slide, body, x + 2.12, y + 0.16, 3.2, 0.55, 10.5, MUTED)
+shape(slide, 1.3, 6.2, 10.75, 0.46, PALE_ORANGE, True, ORANGE)
+add_text(slide, "Fallback: use the evaluation report if an external provider is slow; never bypass the review controls.", 1.45, 6.33, 10.45, 0.19, 11.2, ORANGE, True, PP_ALIGN.CENTER)
 
 
-# Slide 5: evaluation and monitoring
+# 8 — quality and operations
 slide = prs.slides.add_slide(BLANK)
-title(slide, "Evidence + observability", "The system is measurable, not just impressive",
-      "Quality tells us whether answers are good; observability tells us what happened and whether the app is healthy.", 5, "Evidence & operations | 15:00-17:30")
-cards = [
-    ("100%", "field checks", "4 suppliers • 12 PDFs", BLUE),
-    ("100%", "Q&A + citations", "controlled corpus", TEAL),
-    ("100%", "not-found + isolation", "no cross-supplier answers", VIOLET),
-    ("2.0s", "average Q&A latency", "2.4s maximum in report", ORANGE),
+title(
+    slide,
+    "Evidence",
+    "Measured quality plus operational visibility",
+    "The repository includes a controlled multi-supplier corpus; the admin workspace exposes current runtime evidence.",
+    8,
+    "Quality + operations | 15:40–17:30",
+)
+metrics = [
+    ("36/36", "field checks", "historical v3 evaluation", BLUE),
+    ("24/24", "Q&A cases", "answers + expected terms", TEAL),
+    ("100%", "citations + not-found", "including isolation", VIOLET),
+    ("2,035 ms", "average Q&A", "2,439 ms maximum", ORANGE),
 ]
-for i, (value, label, note, accent) in enumerate(cards):
-    x = 0.82 + i * 3.05
-    shape(slide, x, 2.1, 2.72, 1.23, PALE, True, RGBColor(220, 230, 241))
-    shape(slide, x, 2.1, 0.08, 1.23, accent, True)
-    add_text(slide, value, x + 0.23, 2.3, 2.2, 0.35, 25, NAVY, True, font="Aptos Display")
-    add_text(slide, label, x + 0.23, 2.75, 2.25, 0.2, 12, NAVY, True)
-    add_text(slide, note, x + 0.23, 3.03, 2.25, 0.16, 9.5, MUTED)
-add_text(slide, "Three feedback loops", 0.84, 3.86, 2.4, 0.25, 17, NAVY, True)
-loops = [
-    ("Langfuse", "trace model, tokens, latency", BLUE),
-    ("Promptfoo", "assert citations, boundaries, not-found", TEAL),
-    ("Prometheus", "scrape traffic, errors, p95, dependencies", ORANGE),
+for index, (value, name, note, accent) in enumerate(metrics):
+    x = 0.7 + index * 3.13
+    shape(slide, x, 2.08, 2.78, 1.38, PALE, True, LINE)
+    shape(slide, x, 2.08, 0.08, 1.38, accent, True)
+    add_text(slide, value, x + 0.23, 2.3, 2.3, 0.35, 24, NAVY, True, font="Aptos Display")
+    add_text(slide, name, x + 0.23, 2.76, 2.35, 0.2, 11.5, NAVY, True)
+    add_text(slide, note, x + 0.23, 3.08, 2.35, 0.16, 9.1, MUTED)
+ops = [
+    (0.82, "Admin observability", "success/failure • model/prompt • tokens • avg/P95 latency\nRAG grounding • OCR methods/pages • ERP attempts/latency", BLUE),
+    (4.77, "Langfuse", "privacy-safe correlated traces and cost analysis\ncontent capture disabled by default", VIOLET),
+    (8.72, "Prometheus + Promptfoo", "traffic • errors • dependencies • decisions\ngrounding • citations • isolation • refusals", ORANGE),
 ]
-for i, (name, desc, accent) in enumerate(loops):
-    x = 0.9 + i * 4.1
-    shape(slide, x, 4.35, 3.55, 1.15, WHITE, True, accent)
-    add_text(slide, name, x + 0.25, 4.62, 1.3, 0.22, 16, accent, True)
-    add_text(slide, desc, x + 1.5, 4.59, 1.72, 0.34, 11, MUTED)
-add_text(slide, "Demo caveat: these are controlled synthetic evaluations, not production guarantees.", 0.9, 6.1, 11.2, 0.25, 13.5, ORANGE, True, PP_ALIGN.CENTER)
-
-# Results will be appended after the validation run; show only the measurement approach now.
-clear_slide(slide)
-title(slide, "Quality + observability", "Built-in measurement for quality and operations",
-      "The application captures the evidence needed to validate answer quality and service health.", 5, "Quality & operations | 15:00-17:30")
-cards = [
-    ("Langfuse", "Trace model calls, tokens, latency, and failures", BLUE),
-    ("Promptfoo", "Evaluate grounding, citations, isolation, and refusals", TEAL),
-    ("Prometheus", "Monitor traffic, errors, latency, and dependencies", ORANGE),
-]
-for i, (name, desc, accent) in enumerate(cards):
-    x = 0.9 + i * 4.1
-    shape(slide, x, 2.2, 3.55, 1.45, WHITE, True, accent)
-    add_text(slide, name, x + 0.25, 2.52, 3.0, 0.25, 18, accent, True)
-    add_text(slide, desc, x + 0.25, 2.95, 3.0, 0.42, 12, MUTED)
-add_text(slide, "Validation results will be added after the monitoring and quality test run.", 0.95, 5.1, 11.4, 0.35, 18, NAVY, True, PP_ALIGN.CENTER)
+for x, head, body, accent in ops:
+    card(slide, x, 4.08, 3.78, 1.58, head, body, accent, WHITE)
+add_text(slide, "Controlled synthetic results are evidence—not production guarantees; rerun them for every release candidate.", 0.95, 6.27, 11.45, 0.28, 12.2, RED, True, PP_ALIGN.CENTER)
 
 
-# Slide 6: tradeoffs, limitations, future
+# 9 — security and production readiness
 slide = prs.slides.add_slide(BLANK)
-title(slide, "Trade-offs + future scope", "Pragmatic choices today; production hardening next",
-      "The important design question is not whether AI can answer—it is where AI must stop.", 6, "Trade-offs & future | 17:30-19:15")
-shape(slide, 0.82, 2.1, 5.65, 4.3, RGBColor(255, 247, 237), True, RGBColor(254, 215, 170))
-add_text(slide, "Trade-offs accepted", 1.15, 2.47, 2.5, 0.3, 20, ORANGE, True, font="Aptos Display")
+title(
+    slide,
+    "Security + readiness",
+    "Strong prototype controls; explicit production prerequisites",
+    "The demo makes privacy and accountability visible while remaining honest about operational hardening.",
+    9,
+    "Readiness | 17:30–19:10",
+)
+shape(slide, 0.78, 2.1, 5.7, 4.15, PALE_BLUE, True, BLUE)
+add_text(slide, "Implemented now", 1.1, 2.43, 2.7, 0.31, 20, BLUE, True, font="Aptos Display")
 bullets(slide, [
-    "ChromaDB over pgvector: fewer permissions and faster setup",
-    "gpt-4o-mini default: lower cost and latency",
-    "rules + human review: explainability over autonomy",
-    "Prometheus metrics: operational visibility with a lightweight deployment",
-], 1.15, 3.12, 4.7, 2.25, 13.5, RGBColor(112, 61, 12))
-shape(slide, 6.78, 2.1, 5.72, 4.3, RGBColor(239, 246, 255), True, RGBColor(191, 219, 254))
-add_text(slide, "Limitations → future", 7.1, 2.47, 2.8, 0.3, 20, BLUE, True, font="Aptos Display")
+    "role-enforced API routes; scrypt supplier passwords",
+    "hashed, expiring bearer sessions",
+    "UUID paths, MIME/size limits and SHA-256 verification",
+    "PII redaction before external AI calls",
+    "supplier-filtered retrieval and privacy-safe telemetry",
+    "human decision, immutable revision metadata and audit trail",
+], 1.1, 3.04, 4.92, 2.54, 12.2, INK, 7)
+shape(slide, 6.84, 2.1, 5.7, 4.15, PALE_ORANGE, True, ORANGE)
+add_text(slide, "Before production", 7.16, 2.43, 2.9, 0.31, 20, ORANGE, True, font="Aptos Display")
 bullets(slide, [
-    "scanned PDFs → OCR and multi-page parsing",
-    "no auth/RBAC → SSO, retention, encryption, audit controls",
-    "small corpus → adversarial held-out evaluation",
-    "ERP handoff → idempotent production integration",
-    "metrics endpoint → hosted dashboards and alerting",
-], 7.1, 3.12, 4.75, 2.25, 13.5, NAVY)
-add_text(slide, "North star: reduce reviewer effort while keeping evidence and accountability visible.", 1.0, 6.62, 11.3, 0.23, 14, NAVY, True, PP_ALIGN.CENTER)
+    "SSO/MFA, secure HttpOnly sessions and enterprise RBAC",
+    "TLS, secrets manager and private docs/metrics",
+    "encrypted object storage, malware/DLP and retention",
+    "durable worker queue, retries and managed persistence",
+    "policy governance, privacy impact and provider agreements",
+    "browser E2E, load, accessibility, security and DR tests",
+], 7.16, 3.04, 4.92, 2.54, 12.2, INK, 7)
+add_text(slide, "Current deployment profile: local development and capstone demonstration—not a production procurement service.", 1.0, 6.57, 11.35, 0.26, 12.5, RED, True, PP_ALIGN.CENTER)
 
 
-# Slide 7: Q&A
+# 10 — close
 slide = prs.slides.add_slide(BLANK)
-shape(slide, 0, 0, 13.333, 7.5, PALE)
+shape(slide, 0, 0, 13.333, 7.5, NAVY)
 shape(slide, 0, 0, 13.333, 0.16, VIOLET)
-add_text(slide, "Q&A", 0.82, 1.15, 4.3, 0.75, 58, NAVY, True, font="Aptos Display")
-add_text(slide, "Questions, challenges, and trade-offs", 0.88, 2.18, 7.8, 0.38, 24, MUTED, False, font="Aptos Display")
-shape(slide, 0.9, 3.35, 11.4, 1.52, WHITE, True, RGBColor(220, 230, 241))
-add_text(slide, "Discussion topics", 1.25, 3.7, 2.4, 0.23, 15, VIOLET, True)
-add_text(slide, "Why ChromaDB?  •  How do you prove grounding?  •  What happens when extraction is wrong?  •  How would this reach production?", 3.7, 3.63, 7.9, 0.52, 14, NAVY, True)
-add_text(slide, "Thank you", 0.92, 5.7, 2.4, 0.34, 22, NAVY, True, font="Aptos Display")
-footer(slide, 7, "Questions & discussion")
+add_text(slide, "VendorLens AI", 0.82, 0.86, 3.8, 0.48, 25, RGBColor(191, 221, 234), True, font="Aptos Display")
+add_text(slide, "Evidence in.\nAccountable decision out.", 0.82, 1.7, 7.75, 1.38, 38, WHITE, True, font="Aptos Display")
+summary = [
+    ("TRACEABLE", "page sources • citations • revisions", BLUE),
+    ("CONTROLLED", "policy gates • human approval", VIOLET),
+    ("OPERABLE", "metrics • traces • safe retries", ORANGE),
+]
+for index, (head, body, accent) in enumerate(summary):
+    x = 0.86 + index * 3.96
+    shape(slide, x, 4.2, 3.48, 1.12, RGBColor(20, 55, 90), True, accent, 1.5)
+    add_text(slide, head, x + 0.18, 4.47, 3.1, 0.22, 14, accent, True, PP_ALIGN.CENTER)
+    add_text(slide, body, x + 0.18, 4.83, 3.1, 0.18, 9.7, RGBColor(210, 230, 241), False, PP_ALIGN.CENTER)
+add_text(slide, "Q&A", 0.82, 6.07, 3.2, 0.5, 28, WHITE, True, font="Aptos Display")
+footer(slide, 10, "Questions + discussion | 19:10–20:00")
 
-# Keep the closing page focused only on Q&A.
-clear_slide(slide)
-shape(slide, 0, 0, 13.333, 7.5, PALE)
-shape(slide, 0, 0, 13.333, 0.16, VIOLET)
-add_text(slide, "Q&A", 0.82, 2.35, 11.7, 1.0, 62, NAVY, True, PP_ALIGN.CENTER, font="Aptos Display", valign=MSO_ANCHOR.MIDDLE)
-footer(slide, 7, "Questions & discussion")
 
-prs.core_properties.title = "VendorLens AI - 20 Minute Presentation"
-prs.core_properties.subject = "Supplier onboarding, RAG, compliance review, and observability"
+prs.core_properties.title = "VendorLens AI - 20 Minute Demo Presentation"
+prs.core_properties.subject = "As-built supplier onboarding, document AI, policy review, ERP integration, and observability"
 prs.core_properties.author = "VendorLens AI"
+prs.core_properties.comments = "Updated for the September 2026 as-built project baseline."
 prs.save(OUT)
 print(OUT)

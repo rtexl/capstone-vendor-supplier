@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>VendorLens AI — Project Technical Document</title>
+  <style>
+    @page { size: A4; margin: 1.8cm 1.7cm 1.8cm 1.7cm; }
+    body { font-family: Aptos, Calibri, Arial, sans-serif; color: #172033; font-size: 10pt; line-height: 1.38; margin: 0; }
+    h1 { color: #123C69; font-size: 22pt; line-height: 1.12; margin: 0 0 12pt; border-bottom: 3px solid #2A7F9E; padding-bottom: 6pt; }
+    h1.first { page-break-before: auto; }
+    h2 { color: #175D78; font-size: 14.5pt; margin: 16pt 0 6pt; page-break-after: avoid; }
+    h3 { color: #264C5E; font-size: 11.5pt; margin: 12pt 0 4pt; page-break-after: avoid; }
+    p { margin: 0 0 7pt; }
+    ul, ol { margin: 4pt 0 8pt 18pt; padding: 0; }
+    li { margin: 0 0 3pt; }
+    table { border-collapse: collapse; width: 100%; margin: 7pt 0 12pt; page-break-inside: avoid; }
+    th { background: #123C69; color: #ffffff; font-weight: 700; text-align: left; padding: 6pt; border: 1px solid #123C69; }
+    td { vertical-align: top; padding: 5pt 6pt; border: 1px solid #B8C9D3; }
+    tr:nth-child(even) td { background: #F3F7F9; }
+    code { font-family: Consolas, "Liberation Mono", monospace; color: #123C69; font-size: 9pt; }
+    pre { font-family: Consolas, "Liberation Mono", monospace; font-size: 8.5pt; line-height: 1.28; white-space: pre-wrap; margin: 6pt 0 4pt; }
+    a { color: #146A88; text-decoration: none; }
+    .cover { padding-top: 0.8cm; }
+    .cover-band { background: #123C69; color: #fff; padding: 28pt 24pt; margin: 1.7cm 0 0.8cm; }
+    .cover h1 { color: #fff; border: none; font-size: 32pt; page-break-before: auto; margin: 0 0 8pt; }
+    .cover .subtitle { color: #D5EEF5; font-size: 17pt; margin: 0; }
+    .cover .tagline { color: #315567; font-size: 13pt; margin: 0 0 1.6cm; }
+    .doc-meta { width: 88%; margin-top: 1.2cm; }
+    .doc-meta td:first-child { width: 33%; font-weight: 700; color: #123C69; }
+    .confidential { color: #8A4B08; font-weight: 700; letter-spacing: 0.4pt; margin-top: 2cm; }
+    .toc { }
+    .toc h1 { page-break-before: always; }
+    h1#executive-summary { page-break-before: always; }
+    .toc table { margin-top: 10pt; }
+    .toc td:first-child { width: 9%; text-align: center; font-weight: 700; color: #2A7F9E; }
+    .lead { font-size: 11.2pt; color: #294A5B; line-height: 1.48; }
+    .callout { background: #EAF5F8; border-left: 5px solid #2A7F9E; padding: 9pt 11pt; margin: 9pt 0 12pt; }
+    .warning { background: #FFF4E5; border-left: 5px solid #D68117; padding: 9pt 11pt; margin: 9pt 0 12pt; }
+    .success { background: #EBF6EE; border-left: 5px solid #2D8659; padding: 9pt 11pt; margin: 9pt 0 12pt; }
+    .diagram { background: #F5F8FA; border: 1px solid #9FB7C4; padding: 10pt 12pt; margin: 8pt 0 4pt; page-break-inside: avoid; }
+    .caption { color: #516873; font-size: 8.5pt; font-style: italic; margin: 3pt 0 10pt; }
+    .small { font-size: 8.7pt; color: #4B5E68; }
+    .pill { color: #fff; background: #2A7F9E; font-weight: 700; padding: 2pt 6pt; }
+    .status-pass { color: #216B45; font-weight: 700; }
+    .status-risk { color: #9A5200; font-weight: 700; }
+    .break-before { page-break-before: always; }
+    .keep { page-break-inside: avoid; }
+    .two-col { width: 100%; }
+    .two-col td { width: 50%; }
+    .footer-note { border-top: 1px solid #93AAB6; margin-top: 16pt; padding-top: 5pt; font-size: 8pt; color: #637883; }
+  </style>
+</head>
+<body>
+
+<div class="cover">
+  <p class="tagline">AI-assisted, policy-driven supplier onboarding with human approval</p>
+  <div class="cover-band">
+    <h1>VendorLens AI</h1>
+    <p class="subtitle">Project Technical Document</p>
+  </div>
+  <p class="lead">As-built architecture, implementation, data, integration, security, deployment, testing, and operational reference.</p>
+  <table class="doc-meta">
+    <tr><td>Document version</td><td>1.0</td></tr>
+    <tr><td>Prepared</td><td>28 September 2026</td></tr>
+    <tr><td>Code baseline</td><td><code>supplier-rag-feature</code> at <code>f54fc07</code></td></tr>
+    <tr><td>System version</td><td>VendorLens AI API 0.1.0</td></tr>
+    <tr><td>Status</td><td>As-built technical reference</td></tr>
+    <tr><td>Audience</td><td>Engineering, assessors, reviewers, administrators, and operations</td></tr>
+    <tr><td>Deployment profile</td><td>Local development and capstone demonstration</td></tr>
+  </table>
+  <p class="confidential">INTERNAL / CAPSTONE DEMONSTRATION</p>
+  <p class="small">This document describes the repository as inspected. Where older project notes differ from the implementation, the current source code and configuration are treated as authoritative.</p>
+</div>
+
+<div class="toc">
+  <h1 class="first" style="page-break-before: always;">Contents</h1>
+  <table>
+    <tr><td>1</td><td><a href="#executive-summary">Executive summary</a></td></tr>
+    <tr><td>2</td><td><a href="#purpose-scope">Purpose, scope, and users</a></td></tr>
+    <tr><td>3</td><td><a href="#capabilities">Functional capabilities and lifecycle</a></td></tr>
+    <tr><td>4</td><td><a href="#architecture">System architecture</a></td></tr>
+    <tr><td>5</td><td><a href="#frontend">Frontend architecture</a></td></tr>
+    <tr><td>6</td><td><a href="#backend">Backend and API architecture</a></td></tr>
+    <tr><td>7</td><td><a href="#data">Data architecture</a></td></tr>
+    <tr><td>8</td><td><a href="#documents">Document ingestion, OCR, and revisions</a></td></tr>
+    <tr><td>9</td><td><a href="#ai-rag">AI processing and retrieval-augmented generation</a></td></tr>
+    <tr><td>10</td><td><a href="#policy">Policy and compliance engine</a></td></tr>
+    <tr><td>11</td><td><a href="#erp">Mock ERP / MCP integration</a></td></tr>
+    <tr><td>12</td><td><a href="#security">Security, privacy, and audit controls</a></td></tr>
+    <tr><td>13</td><td><a href="#observability">Observability and quality evaluation</a></td></tr>
+    <tr><td>14</td><td><a href="#deployment">Deployment and configuration</a></td></tr>
+    <tr><td>15</td><td><a href="#testing">Testing and verification</a></td></tr>
+    <tr><td>16</td><td><a href="#limitations">Constraints, risks, and production readiness</a></td></tr>
+    <tr><td>17</td><td><a href="#operations">Operations runbook</a></td></tr>
+    <tr><td>18</td><td><a href="#references">Repository reference map and glossary</a></td></tr>
+  </table>
+  <div class="callout"><strong>Reading guide.</strong> Sections 1–4 explain what the system does and how it is structured. Sections 5–11 describe the implementation. Sections 12–17 cover controls, operation, verification, and readiness.</div>
+</div>
+
+<h1 id="executive-summary" class="first" style="page-break-before: always;">1. Executive summary</h1>
+<p class="lead">VendorLens AI is a full-stack supplier onboarding and review application. It replaces a fragmented email-and-spreadsheet process with a controlled workflow in which suppliers submit structured details and evidence, AI assists with extraction and evidence discovery, deterministic policy checks expose gaps, a human reviewer remains responsible for every final decision, and approved data is transferred to a separately bounded mock ERP service.</p>
+
+<h2>1.1 Business problem</h2>
+<p>Supplier onboarding normally combines identity data, tax and bank evidence, category-specific controls, insurance, security questionnaires, and human judgment. The process is slow when evidence arrives through separate channels, difficult to audit when reviewers cannot trace a value to its source, and risky when an automated system is allowed to infer or approve beyond the evidence.</p>
+
+<h2>1.2 Proposed solution</h2>
+<p>VendorLens provides three role-specific workspaces:</p>
+<ul>
+  <li><strong>Supplier portal:</strong> account registration, India-based business details, category selection, dynamic evidence checklist, uploads, submission, correction/resubmission, and a scoped onboarding assistant.</li>
+  <li><strong>Reviewer workbench:</strong> case list, original evidence, extracted values with page references and confidence, document/field verification, policy checks, grounded case chat, approval or rejection, and ERP record retrieval.</li>
+  <li><strong>Administrator workspace:</strong> profile maintenance and aggregate AI/OCR/ERP observability.</li>
+</ul>
+
+<h2>1.3 Architectural position</h2>
+<div class="callout"><strong>Core design principle:</strong> AI supports document understanding and retrieval; it does not own the approval decision. Approval is permitted only when every persisted compliance result is <code>PASS</code>, and an explicit reviewer action completes the decision and ERP handoff.</div>
+<p>The implementation combines React and Material UI, a FastAPI service layer, PostgreSQL for durable business state and audit records, local file storage for document originals, ChromaDB for supplier-scoped vectors, an OpenRouter-or-Azure OpenAI provider boundary, and a separate JSON-RPC mock ERP MCP service. Docker Compose assembles the local system.</p>
+
+<h2>1.4 Current maturity</h2>
+<p>The repository represents a feature-rich capstone/demo implementation rather than a production procurement platform. It includes schema migrations through revision <code>0014_document_ocr</code>, 79 backend test functions across 18 test modules, configurable staff authentication, local OCR, privacy-conscious telemetry, and end-to-end workflow controls. Production use still requires hardened identity, secret management, object storage, network encryption, retention controls, malware scanning, authorization policy, backup/restore procedures, and independent security and regulatory review.</p>
+
+<h1 id="purpose-scope">2. Purpose, scope, and users</h1>
+
+<h2>2.1 Objectives</h2>
+<table>
+  <tr><th>Objective</th><th>Implemented response</th></tr>
+  <tr><td>Reduce manual transcription</td><td>AI extracts structured values from redacted document text and retains source page and confidence.</td></tr>
+  <tr><td>Make review traceable</td><td>Original files, SHA-256 digests, revisions, citations, policy evidence, and audit events are linked to the supplier case.</td></tr>
+  <tr><td>Prevent unsupported answers</td><td>Document Q&amp;A retrieves only supplier-filtered chunks and enforces cited evidence or an exact not-found response.</td></tr>
+  <tr><td>Apply policy consistently</td><td>A versioned synthetic policy catalogue maps one of 24 subcategories to a baseline plus category-specific evidence and two checks per requirement.</td></tr>
+  <tr><td>Preserve human accountability</td><td>AI matches remain <code>NEEDS_REVIEW</code> until a reviewer verifies evidence; every compliance item must pass before approval.</td></tr>
+  <tr><td>Make downstream creation safe</td><td>The mock ERP validates required data and duplicates, then creates records with a supplier-derived idempotency key.</td></tr>
+</table>
+
+<h2>2.2 In scope</h2>
+<ul>
+  <li>India-based incorporated suppliers under a synthetic policy model.</li>
+  <li>One primary category and one subcategory per application.</li>
+  <li>Baseline registration, tax, and bank evidence plus category-specific controls.</li>
+  <li>PDF, PNG, JPEG, and UTF-8 text evidence up to the configured size limit (10 MB by default).</li>
+  <li>Native PDF text extraction and page-selective local Tesseract OCR.</li>
+  <li>PII redaction before configured external AI calls, structured extraction, embeddings, cited Q&amp;A, and scoped assistants.</li>
+  <li>Reviewer validation, correction cycles, compliance outcomes, approval/rejection, audit, and mock ERP creation.</li>
+</ul>
+
+<h2>2.3 Explicitly out of scope</h2>
+<ul>
+  <li>Real statutory, registry, sanctions, tax, bank, insurance, or credit verification.</li>
+  <li>Multiple countries, multiple concurrent categories, spend bands, or hidden policy conditions.</li>
+  <li>Real enterprise ERP connectivity or transactional procurement.</li>
+  <li>Autonomous supplier approval, legal advice, or waiver decisions.</li>
+  <li>Production-grade identity federation, multi-tenant authorization, malware scanning, data-loss prevention, and records management.</li>
+</ul>
+
+<h2>2.4 Personas and responsibility boundaries</h2>
+<table>
+  <tr><th>Persona</th><th>Primary actions</th><th>Boundary</th></tr>
+  <tr><td>Supplier</td><td>Maintain own application, select category, upload required evidence, submit/resubmit, read reviewer feedback, use onboarding assistant.</td><td>Cannot access another supplier, reviewer controls, admin data, or ERP tools.</td></tr>
+  <tr><td>Reviewer</td><td>Inspect all cases, process/reprocess evidence, review fields/documents, run compliance, ask case questions, decide, validate and retrieve ERP records.</td><td>Cannot administer supplier accounts; approval remains subject to compliance gates.</td></tr>
+  <tr><td>Administrator</td><td>List/delete profiles, reset passwords, inspect aggregated operational/AI metrics.</td><td>Separate role and route family; not the case decision-maker.</td></tr>
+  <tr><td>AI provider</td><td>Structured extraction, embeddings, grounded answers, and assistants when configured.</td><td>Receives redacted text; does not call the ERP or approve suppliers.</td></tr>
+  <tr><td>Mock ERP service</td><td>Validate, create, retrieve, and list supplier-master records.</td><td>Named tools and explicit application calls only; no LLM-controlled tool loop.</td></tr>
+</table>
+
+<h1 id="capabilities">3. Functional capabilities and lifecycle</h1>
+
+<h2>3.1 End-to-end journey</h2>
+<div class="diagram"><pre>Supplier registration
+        │
+        ▼
+Business details + one category/subcategory
+        │
+        ▼
+Dynamic checklist (3 baseline + mapped evidence)
+        │
+        ▼
+Upload → native extraction / selective OCR → READY or FAILED
+        │
+        ▼
+Submit → checklist snapshot → background AI processing
+        │
+        ▼
+Redaction → extraction → canonical fields → embeddings → compliance
+        │
+        ▼
+Reviewer inspects originals, sources, mismatches, checks and assistant answers
+        │
+        ├──────── flag evidence / correction ────────► supplier resubmits
+        │
+        ├──────── reject with audited reason ───────► REJECTED
+        │
+        └──────── all checks PASS + approve ────────► ERP create → APPROVED</pre></div>
+<p class="caption">Figure 1. Implemented supplier lifecycle. Submission persists even if optional AI processing fails.</p>
+
+<h2>3.2 Supplier state model</h2>
+<table>
+  <tr><th>State</th><th>Meaning</th><th>Typical transition</th></tr>
+  <tr><td><code>new</code></td><td>Draft or correction-cycle application.</td><td>Complete details and readable evidence, then submit.</td></tr>
+  <tr><td><code>processing</code></td><td>AI document processing is in progress.</td><td>Processing outcome moves the case to review.</td></tr>
+  <tr><td><code>needs_review</code></td><td>Submitted case awaits or is undergoing human review.</td><td>Verify/correct evidence, request corrections, approve, or reject.</td></tr>
+  <tr><td><code>approved</code></td><td>All checks passed, reviewer approved, ERP record was created/replayed.</td><td>Terminal in the demo workflow.</td></tr>
+  <tr><td><code>rejected</code></td><td>Reviewer rejected with a recorded reason.</td><td>Terminal in the demo workflow.</td></tr>
+</table>
+
+<h2>3.3 Important workflow semantics</h2>
+<ul>
+  <li><strong>Upload readiness is not compliance.</strong> A readable document fills a checklist slot; it does not prove that required values or thresholds are correct.</li>
+  <li><strong>Submission is durable.</strong> An AI/provider failure is recorded for review but does not roll back the supplier submission.</li>
+  <li><strong>Requirements are frozen.</strong> The selected checklist is saved as a requirements snapshot on first submission, protecting the case from silent future catalogue changes.</li>
+  <li><strong>Corrections are bounded.</strong> Category/subcategory cannot change during a correction cycle. Disputed evidence can be replaced and resubmitted.</li>
+  <li><strong>Finalization is guarded.</strong> Finalized cases cannot be reprocessed or modified through the normal workflow.</li>
+</ul>
+
+<h1 id="architecture">4. System architecture</h1>
+
+<h2>4.1 Logical context</h2>
+<div class="diagram"><pre>┌──────────────────────────────── Browser / React SPA ────────────────────────────────┐
+│ Supplier portal             Reviewer workbench             Administrator workspace │
+└───────────────────────────────────────┬─────────────────────────────────────────────┘
+                                        │ HTTPS/REST in a deployed environment
+                                        ▼
+                         ┌──────── Nginx reverse proxy ────────┐
+                         │ SPA assets + /api proxy             │
+                         └────────────────┬────────────────────┘
+                                          ▼
+┌──────────────────────────────────── FastAPI ────────────────────────────────────────┐
+│ Auth/session │ Upload/OCR │ AI orchestration │ RAG │ Compliance │ Audit │ ERP client │
+└──────────┬────────────┬──────────────┬───────────────┬─────────────────┬─────────────┘
+           │            │              │               │                 │ JSON-RPC/MCP
+           ▼            ▼              ▼               ▼                 ▼
+      PostgreSQL   Upload volume   ChromaDB volume  AI provider    Mock ERP MCP service
+                                                     OpenRouter     (same PostgreSQL,
+                                                     or Azure       separate process)</pre></div>
+<p class="caption">Figure 2. Logical runtime boundary. The browser never contacts an AI provider or ERP service directly.</p>
+
+<h2>4.2 Component responsibilities</h2>
+<table>
+  <tr><th>Component</th><th>Responsibility</th><th>Technology</th></tr>
+  <tr><td>Single-page application</td><td>Role-based navigation, application forms, uploads, case workbench, citations, dialogs, and observability presentation.</td><td>React 19, TypeScript 5.8, Vite 7, Material UI 7</td></tr>
+  <tr><td>Web/API edge</td><td>Serve built SPA, route fallback, proxy <code>/api</code>, set upload/time-out behavior.</td><td>Nginx 1.28 Alpine</td></tr>
+  <tr><td>Application API</td><td>Validation, authentication, workflow state, document processing, AI orchestration, compliance, audit, and REST contracts.</td><td>FastAPI 0.116, Uvicorn, Pydantic, SQLAlchemy 2</td></tr>
+  <tr><td>Relational persistence</td><td>Business records, sessions, evidence metadata, extracted fields, compliance, AI runs, audits, assistants, ERP records and attempts.</td><td>PostgreSQL 18, Alembic 1.16</td></tr>
+  <tr><td>Document storage</td><td>Original and archived revision files, supplier-separated with UUID filenames.</td><td>Local filesystem / Docker volume</td></tr>
+  <tr><td>Vector retrieval</td><td>Redacted page-local chunks, embeddings, supplier/document metadata, similarity queries.</td><td>ChromaDB 1.5.9 persistent client</td></tr>
+  <tr><td>Document extraction</td><td>Native PDF text and local page-selective OCR with provenance.</td><td>PyMuPDF 1.26, Tesseract English</td></tr>
+  <tr><td>AI provider adapter</td><td>Structured extraction, semantic policy assessment, embeddings, cited answers, and assistants.</td><td>OpenAI SDK 2.53; OpenRouter preferred, Azure fallback by configuration</td></tr>
+  <tr><td>ERP boundary</td><td>Named JSON-RPC tools for validate/create/get/list, idempotency and attempt audit.</td><td>Separate FastAPI/Uvicorn service</td></tr>
+  <tr><td>Operations</td><td>Metrics, traces, quality evaluation, health checks.</td><td>Prometheus client, Langfuse, Promptfoo guidance</td></tr>
+</table>
+
+<h2>4.3 Key architectural decisions</h2>
+<ul>
+  <li>PostgreSQL is the source of truth for workflow and audit data; ChromaDB is a derived retrieval index.</li>
+  <li>Text extraction is synchronous at upload so unreadable evidence is rejected early and visibly.</li>
+  <li>AI processing is invoked after submission as an in-process FastAPI background task; manual reviewer processing/retry is also available.</li>
+  <li>Provider selection is exclusive and configuration-based. A failed OpenRouter request does not silently fail over to Azure.</li>
+  <li>AI prompts are versioned text files and run records persist prompt/model/token/latency metadata.</li>
+  <li>ERP creation is deterministic application logic after human approval; an LLM never chooses or executes ERP tools.</li>
+</ul>
+
+<h1 id="frontend">5. Frontend architecture</h1>
+
+<h2>5.1 Route map</h2>
+<table>
+  <tr><th>Route</th><th>Page</th><th>Access</th></tr>
+  <tr><td><code>/</code></td><td>Role landing page</td><td>Public</td></tr>
+  <tr><td><code>/supplier/login</code></td><td>Supplier registration/sign-in</td><td>Public</td></tr>
+  <tr><td><code>/supplier/application</code></td><td>Supplier application and assistant</td><td>Supplier</td></tr>
+  <tr><td><code>/reviewer/login</code></td><td>Reviewer access</td><td>Public entry</td></tr>
+  <tr><td><code>/review</code></td><td>Reviewer case dashboard</td><td>Reviewer</td></tr>
+  <tr><td><code>/review/suppliers/:supplierId</code></td><td>Case workbench</td><td>Reviewer</td></tr>
+  <tr><td><code>/review/erp</code></td><td>ERP supplier records</td><td>Reviewer</td></tr>
+  <tr><td><code>/admin/login</code></td><td>Administrator access</td><td>Public entry</td></tr>
+  <tr><td><code>/admin</code></td><td>Profiles and AI observability</td><td>Administrator</td></tr>
+</table>
+
+<h2>5.2 Client structure</h2>
+<ul>
+  <li><code>App.tsx</code> declares routes and role guards.</li>
+  <li><code>AuthContext.tsx</code> manages current role/session, restores sessions, and removes invalid tokens.</li>
+  <li><code>api/client.ts</code> centralizes API URL, bearer authorization, JSON errors, and typed request methods.</li>
+  <li>Role-specific pages coordinate forms and workflows; reusable components provide the shell, status chips, ERP dialog, and supplier assistant popover.</li>
+  <li>Theme tokens are centralized under <code>src/theme</code>.</li>
+</ul>
+
+<h2>5.3 Session behavior</h2>
+<p>Bearer session tokens are stored by role in browser <code>localStorage</code> and attached to API calls. Client guards improve navigation but are not security controls; the API independently applies supplier, reviewer, or administrator dependencies. This local-storage approach is acceptable for a controlled demo but should be replaced or strongly hardened for production because browser script compromise can expose tokens.</p>
+
+<h2>5.4 User-experience controls</h2>
+<ul>
+  <li>Dynamic checklist entries are derived from the selected subcategory.</li>
+  <li>Uploaded types disappear from available upload choices and revision/history actions remain contextual.</li>
+  <li>Processing, OCR, review, compliance, decision, and ERP statuses are shown independently.</li>
+  <li>Original files open through authenticated API endpoints with no-store headers and integrity verification.</li>
+  <li>Assistant output supports Markdown/GFM presentation, while the backend owns content scope and redaction.</li>
+</ul>
+
+<h1 id="backend">6. Backend and API architecture</h1>
+
+<h2>6.1 Application structure</h2>
+<table>
+  <tr><th>Layer</th><th>Repository location</th><th>Role</th></tr>
+  <tr><td>API composition</td><td><code>backend/app/main.py</code></td><td>FastAPI instance, CORS, error normalization, metrics middleware, routers.</td></tr>
+  <tr><td>Configuration</td><td><code>backend/app/config.py</code></td><td>Environment-backed, typed settings and provider selection.</td></tr>
+  <tr><td>Contracts</td><td><code>backend/app/schemas.py</code></td><td>Pydantic input/output models and validation.</td></tr>
+  <tr><td>Persistence</td><td><code>database.py</code>, <code>models.py</code>, <code>alembic/</code></td><td>Sessions, ORM entities, and ordered schema evolution.</td></tr>
+  <tr><td>HTTP routers</td><td><code>backend/app/routers/</code></td><td>Portal, suppliers, documents, AI, review, ERP, admin, assistant, and health endpoints.</td></tr>
+  <tr><td>Domain services</td><td><code>backend/app/services/</code></td><td>Authentication, documents, processing, compliance, retrieval, policy, ERP, tracing.</td></tr>
+  <tr><td>Policy/prompts</td><td><code>backend/policy/</code>, <code>backend/app/prompts/</code></td><td>Versioned rules and model instructions kept outside route logic.</td></tr>
+</table>
+
+<h2>6.2 API inventory</h2>
+<table class="small">
+  <tr><th>Area</th><th>Representative endpoints</th><th>Access</th></tr>
+  <tr><td>Health/operations</td><td><code>GET /api/health</code>, <code>GET /metrics/</code>, <code>GET /docs</code></td><td>Public in current demo</td></tr>
+  <tr><td>Authentication</td><td><code>POST /api/portal/auth/register</code>, <code>/login</code>, <code>/reviewer[-demo]</code>, <code>/admin[-demo]</code>; <code>GET /session</code>; <code>POST /logout</code></td><td>Entry public; session/logout authenticated</td></tr>
+  <tr><td>Supplier portal</td><td><code>GET/PATCH /api/portal/application</code>; <code>POST /submit</code>, <code>/resubmit</code>; document upload/delete/retry/content/history; assistant/history</td><td>Supplier</td></tr>
+  <tr><td>Policy catalogue</td><td><code>GET /api/portal/policy</code></td><td>Public</td></tr>
+  <tr><td>Reviewer case list/detail</td><td><code>POST/GET /api/suppliers</code>; <code>GET /api/suppliers/{id}</code></td><td>Reviewer</td></tr>
+  <tr><td>Reviewer documents</td><td>Upload/delete/retry/content/history under <code>/api/suppliers/{id}/documents</code></td><td>Reviewer</td></tr>
+  <tr><td>AI/RAG</td><td><code>POST /api/suppliers/{id}/process</code>; per-document process; <code>/questions</code>; reviewer assistant/history</td><td>Reviewer</td></tr>
+  <tr><td>Review/compliance</td><td>Field correction/review, document review, compliance get/run, approve/reject</td><td>Reviewer</td></tr>
+  <tr><td>ERP</td><td>Per-case validate/record under supplier routes; <code>GET /api/mock-erp/records</code></td><td>Reviewer</td></tr>
+  <tr><td>Administrator</td><td><code>GET /api/admin/profiles</code>, <code>/observability</code>; reset-password; delete profile</td><td>Administrator</td></tr>
+  <tr><td>General assistant</td><td><code>POST /api/assistant/chat</code></td><td>Public, onboarding scope only</td></tr>
+</table>
+
+<h2>6.3 Error and transaction behavior</h2>
+<p>HTTP errors are normalized to <code>{code, message}</code>; Pydantic validation errors return a stable <code>validation_error</code> body with details. Database sessions are request-scoped. Long AI operations explicitly create and finalize <code>AiRun</code> records, sanitize persisted failure messages, and retain document-level status so partial processing is diagnosable. Submission and AI processing are deliberately decoupled.</p>
+
+<h2>6.4 CORS and request metrics</h2>
+<p>CORS accepts only the configured frontend origin. Middleware records count, latency, status, and in-progress gauges while normalizing UUID path segments to avoid unbounded metric labels. The metrics application is mounted separately at <code>/metrics</code>.</p>
+
+<h1 id="data">7. Data architecture</h1>
+
+<h2>7.1 Persistence boundaries</h2>
+<table>
+  <tr><th>Store</th><th>Authoritative content</th><th>Recovery implication</th></tr>
+  <tr><td>PostgreSQL</td><td>Users/sessions, supplier workflow, metadata, extracted fields, compliance, AI runs, audits, assistant history, ERP data.</td><td>Primary business backup target; migrations are mandatory.</td></tr>
+  <tr><td>Upload volume</td><td>Active originals and archived file revisions.</td><td>Must be backed up consistently with document metadata.</td></tr>
+  <tr><td>Chroma volume</td><td>Derived redacted text chunks and embeddings.</td><td>Can be recreated by reprocessing when originals and AI configuration are available.</td></tr>
+</table>
+
+<h2>7.2 Relational entity model</h2>
+<div class="diagram"><pre>PortalAccount 1 ─── 0..1 Supplier 1 ─── * Document 1 ─── * ExtractedField
+      │                    │                 │
+      └── * PortalSession  │                 └── archived metadata: DocumentRevision
+                           │
+                           ├── * AuditEvent
+                           ├── * AiRun
+                           ├── * ComplianceResult
+                           ├── * AssistantMessage
+                           ├── 0..1 linked ErpSupplierRecord
+                           └── * ErpToolAttempt</pre></div>
+<p class="caption">Figure 3. Conceptual relationships. Some integration entities use source identifiers rather than ORM relationships to keep the service boundary explicit.</p>
+
+<h2>7.3 Entity catalogue</h2>
+<table class="small">
+  <tr><th>Entity</th><th>Purpose and notable fields</th></tr>
+  <tr><td><code>Supplier</code></td><td>Case header, portal values, category, submission snapshot/status, decision, and ERP linkage.</td></tr>
+  <tr><td><code>PortalAccount</code></td><td>Unique supplier email and scrypt password hash.</td></tr>
+  <tr><td><code>PortalSession</code></td><td>SHA-256 token hash, role, optional account, seven-day expiry.</td></tr>
+  <tr><td><code>Document</code></td><td>One active file per supplier/document type, filename/path/type/size/hash/revision, text/OCR metadata, AI and reviewer states.</td></tr>
+  <tr><td><code>DocumentRevision</code></td><td>Immutable metadata for archived originals superseded by replacement.</td></tr>
+  <tr><td><code>ExtractedField</code></td><td>Per-document field/value/page/confidence plus reviewer state and provenance.</td></tr>
+  <tr><td><code>AiRun</code></td><td>Operation, status, model, prompt, tokens, latency, retrieval count, safe error and details.</td></tr>
+  <tr><td><code>ComplianceResult</code></td><td>Unique current result per supplier/rule with status, message, evidence, and timestamp.</td></tr>
+  <tr><td><code>AuditEvent</code></td><td>Append-style action record with entity identifiers and structured details.</td></tr>
+  <tr><td><code>AssistantMessage</code></td><td>Supplier/reviewer audience, ordered conversation role/content/citations.</td></tr>
+  <tr><td><code>ErpSupplierRecord</code></td><td>Mock downstream master with unique ERP ID and idempotency key.</td></tr>
+  <tr><td><code>ErpToolAttempt</code></td><td>Sanitized integration attempt, operation/status/latency/attempt/error and summaries.</td></tr>
+</table>
+
+<h2>7.4 Data lifecycle and invalidation</h2>
+<ul>
+  <li>Replacing/deleting evidence invalidates affected extracted fields, compliance results, and vector chunks.</li>
+  <li>Archived metadata preserves revision history; original archived files remain in the upload volume.</li>
+  <li>Reprocessing replaces derived fields and vectors while retaining AI-run/audit history.</li>
+  <li>Compliance persistence replaces the current result set and records a new audit summary.</li>
+  <li>Administrator profile deletion removes database records, supplier upload directories, and vector chunks; backup recovery is outside the demo.</li>
+</ul>
+
+<h1 id="documents">8. Document ingestion, OCR, and revisions</h1>
+
+<h2>8.1 Upload controls</h2>
+<ul>
+  <li>Allowed MIME types: PDF, PNG, JPEG, and plain text.</li>
+  <li>Default maximum: 10 MB, enforced by reading at most the limit plus one byte.</li>
+  <li>One active file per supplier and required document type, enforced in the API and database.</li>
+  <li>Original name is reduced to a basename and retained as metadata; the stored name is a generated UUID plus an allowed extension.</li>
+  <li>Each file receives a SHA-256 digest. Content access recalculates the digest and fails closed on mismatch.</li>
+  <li>Resolved paths must remain under the configured upload root.</li>
+</ul>
+
+<h2>8.2 Extraction algorithm</h2>
+<div class="diagram"><pre>For every PDF/image page
+  ├─ read native text
+  ├─ measure alphanumeric and word thresholds
+  ├─ estimate large-image coverage
+  ├─ if native text is weak or page is image-dominant:
+  │      run local Tesseract OCR (subject to page cap)
+  └─ store [Page N] marker + chosen text
+
+Result method = native | mixed | ocr
+Result metadata = page count + OCR page numbers + language + warnings</pre></div>
+<p class="caption">Figure 4. Page-selective extraction. Images are treated as one-page visual documents.</p>
+
+<h2>8.3 OCR defaults</h2>
+<table>
+  <tr><th>Setting</th><th>Default</th><th>Purpose</th></tr>
+  <tr><td><code>OCR_ENABLED</code></td><td>true</td><td>Enable local OCR fallback.</td></tr>
+  <tr><td><code>OCR_LANGUAGE</code></td><td><code>eng</code></td><td>Tesseract language pack.</td></tr>
+  <tr><td><code>OCR_DPI</code></td><td>300</td><td>Rasterization quality.</td></tr>
+  <tr><td>Native text thresholds</td><td>30 alphanumeric characters; 5 words</td><td>Decide whether native text is usable.</td></tr>
+  <tr><td>Image coverage threshold</td><td>0.5</td><td>Detect image-dominant pages even when some native text exists.</td></tr>
+  <tr><td><code>OCR_MAX_PAGES</code></td><td>30</td><td>Bound local processing and encourage smaller evidence files.</td></tr>
+</table>
+
+<h2>8.4 Failure and retry</h2>
+<p>An unreadable upload is retained with <code>processing_status=failed</code> and a safe error message. Supplier and reviewer retry endpoints rerun text extraction after environment or file issues are resolved. AI extraction and index states are independent, allowing a reviewer to see whether failure occurred at text extraction, structured extraction, or vector indexing.</p>
+
+<h2>8.5 Revision model</h2>
+<p>Before an active document is deleted/replaced, its immutable metadata is inserted into <code>document_revisions</code>. Revision numbers increase per supplier/document type. Authenticated supplier or reviewer endpoints can list history and open an active or archived original. Viewing is audited and responses use <code>Cache-Control: private, no-store</code> and <code>X-Content-Type-Options: nosniff</code>.</p>
+
+<h1 id="ai-rag">9. AI processing and retrieval-augmented generation</h1>
+
+<h2>9.1 Provider selection</h2>
+<p>When <code>OPENROUTER_API_KEY</code> is non-empty, OpenRouter is used. Otherwise the service requires an Azure OpenAI key and endpoint. Extraction, answer, and embedding models are configured independently. Defaults target <code>gpt-4o-mini</code> and <code>text-embedding-3-small</code> model families. Provider choice is cached for the process lifetime, so configuration changes require restart.</p>
+<div class="warning"><strong>No runtime cross-provider failover.</strong> A failed OpenRouter request is surfaced and recorded rather than being retried through Azure. This prevents supplier information from moving silently to another provider because of an outage, bad key, or quota failure.</div>
+
+<h2>9.2 Processing pipeline</h2>
+<div class="diagram"><pre>Readable original text
+      │
+      ├─ deterministic PII patterns → typed placeholders + local replacement map
+      │                              (GSTIN, PAN, CIN, email, phone, bank account)
+      ▼
+Redacted page text
+      ├─ structured extraction (versioned prompt + typed schema)
+      ├─ requirement-specific field allow-list and semantic check assessment
+      ├─ normalize null-like values; restore placeholders locally
+      ├─ choose canonical values by source priority; flag conflicts/low confidence
+      └─ page-local token chunking → embeddings → Chroma supplier metadata
+                                      │
+                                      └─ deterministic compliance persistence</pre></div>
+<p class="caption">Figure 5. PII leaves the application only as typed placeholders; restoration occurs locally for persisted business values.</p>
+
+<h2>9.3 Structured extraction controls</h2>
+<ul>
+  <li>The active extraction prompt is <code>extraction-v4</code>; output is parsed into typed Pydantic schemas.</li>
+  <li>The model must use only supplied redacted text, copy values rather than infer them, and return each allow-listed field exactly once.</li>
+  <li>Each non-null value includes page and confidence. Long narratives are rejected in favor of null.</li>
+  <li>Null-like strings are normalized; explicit policy-significant answers such as “None” or “Not applicable” are preserved for selected fields.</li>
+  <li>Canonical selection considers authoritative document types, confidence, and conflicts rather than presenting every duplicate equally.</li>
+  <li>Every run records provider model, prompt version, token counts, latency, redaction summary, document outcomes, field count, chunk count, and errors.</li>
+</ul>
+
+<h2>9.4 Chunking and vector isolation</h2>
+<p>Text is split by <code>[Page N]</code> markers, then tokenized with the active embedding-model encoding (falling back to <code>cl100k_base</code>). Default chunks are 500 tokens with 75-token overlap and never span source pages. Chroma metadata includes supplier, document, page, and chunk identity. Every retrieval query requires the supplier ID before similarity ranking, which is the primary cross-supplier isolation control.</p>
+
+<h2>9.5 Cited document Q&amp;A</h2>
+<ol>
+  <li>Redact the reviewer’s question.</li>
+  <li>Embed the redacted question.</li>
+  <li>Retrieve up to four supplier-filtered chunks within the default distance threshold of 0.72.</li>
+  <li>Present short model-facing labels such as <code>chunk_1</code>.</li>
+  <li>Require the answer model to return an answer, <code>information_found</code>, and exact supporting labels.</li>
+  <li>Validate citations against retrieved evidence. If evidence is absent, return the exact guarded response: “Information not found in uploaded supplier documents.”</li>
+</ol>
+
+<h2>9.6 Supplier and reviewer assistants</h2>
+<table>
+  <tr><th>Assistant</th><th>Grounding</th><th>Important behavior</th></tr>
+  <tr><td>Public/supplier onboarding assistant</td><td>Retrieved synthetic policy excerpts; signed-in supplier context when available.</td><td>Scope check rejects unrelated topics; hides internal policy IDs; distinguishes upload completeness from correctness; avoids sensitive values.</td></tr>
+  <tr><td>Reviewer case assistant</td><td>Case state, portal-entered values, extracted values and source pages, checks, reviewer feedback, policy and document excerpts.</td><td>Labels each origin, exposes mismatches rather than choosing silently, cites only direct document evidence, never approves/rejects.</td></tr>
+</table>
+<p>Signed-in supplier and reviewer histories are persisted separately by audience with ordered sequences. Conversations are bounded by message count/characters and can be cleared.</p>
+
+<h1 id="policy">10. Policy and compliance engine</h1>
+
+<h2>10.1 Catalogue</h2>
+<p>The active catalogue is <code>synthetic-v1.1</code>. It defines 8 categories, 24 subcategories, and 22 reusable evidence requirements. Every supplier inherits three baseline items—business registration, tax registration/status, and bank verification—plus the requirements mapped to one chosen subcategory.</p>
+<table>
+  <tr><th>Category</th><th>Subcategories</th></tr>
+  <tr><td>TECH — Technology and Digital Services</td><td>Software/SaaS; Cybersecurity; IT managed services</td></tr>
+  <tr><td>PROF — Professional and Advisory Services</td><td>Consulting; Legal/financial advisory; Marketing/creative</td></tr>
+  <tr><td>WORK — Workforce and People Services</td><td>Recruitment; Staffing; Learning and development</td></tr>
+  <tr><td>FAC — Facilities and On Site Services</td><td>Maintenance; Security; Construction/projects</td></tr>
+  <tr><td>FOOD — Food, Pantry and Hospitality</td><td>Pantry supply; Catering; Events/hospitality</td></tr>
+  <tr><td>LOG — Logistics and Supply Chain</td><td>Courier; Freight; Warehousing/3PL</td></tr>
+  <tr><td>GOODS — Goods and Equipment</td><td>Office supplies; IT/AV/electronics; Industrial/electrical/safety</td></tr>
+  <tr><td>SENS — Financial and Sensitive Data Services</td><td>Payments/fintech; Insurance/brokerage; Data processing/BPO/identity</td></tr>
+</table>
+
+<h2>10.2 Evidence definition</h2>
+<p>Each requirement contains a business label, rationale, accepted evidence description, required fields, exactly two checks, and a policy-source reference. The catalogue is deterministic JSON derived from 12 synthetic policy texts. At submission the resolved checklist is snapshotted into the supplier record.</p>
+
+<h2>10.3 Compliance evaluation model</h2>
+<div class="diagram"><pre>Requirement exists in snapshot?
+      │ no → FAIL (missing requirement/document)
+      ▼ yes
+Readable document + extracted fields available?
+      │ no → FAIL
+      ▼ yes
+Evaluate each numbered policy check
+      ├─ objective parser where implemented (dates, durations, money, names, yes/no)
+      └─ AI semantic assessment for non-deterministic checks
+             matched / not_matched / human_review + evidence fields/page
+      │
+      ├─ low confidence → NEEDS_REVIEW
+      ├─ model mismatch → FAIL
+      ├─ model match → NEEDS_REVIEW
+      └─ reviewer verifies original evidence → PASS
+
+Global controls: flagged documents, disputed/unreviewed fields, redaction boundary
+Approval predicate: at least one result AND every result == PASS</pre></div>
+<p class="caption">Figure 6. Calculated findings remain visible even when reviewer verification promotes a check to pass.</p>
+
+<h2>10.4 Human-in-the-loop controls</h2>
+<ul>
+  <li>Reviewers can verify or dispute selected fields; disputes require a reason.</li>
+  <li>Reviewers can correct a value and page reference. A correction receives confidence 1.0 and audited reviewer identity.</li>
+  <li>Reviewers verify or dispute an entire evidence document. Verifying the document verifies its non-corrected extracted fields.</li>
+  <li>Any field or evidence change recalculates current compliance results.</li>
+  <li>A reviewer still provides an explicit approval or rejection action after compliance is ready.</li>
+</ul>
+
+<h1 id="erp">11. Mock ERP / MCP integration</h1>
+
+<h2>11.1 Boundary and tools</h2>
+<p>Docker Compose runs <code>mock-erp-mcp</code> as a separate stateless API process on the internal network. The backend client uses JSON-RPC at <code>/mcp</code> when a URL is configured; local development/tests may call the same tool implementation in process.</p>
+<table>
+  <tr><th>Tool</th><th>Purpose</th></tr>
+  <tr><td><code>validate_supplier_record</code></td><td>Required master fields, India scope, category mapping, IFSC length, duplicate tax/bank checks, optional-field warnings, idempotent replay detection.</td></tr>
+  <tr><td><code>create_supplier_record</code></td><td>Validate and insert an active supplier master with a deterministic <code>ERP-…</code> identifier.</td></tr>
+  <tr><td><code>get_supplier_record</code></td><td>Retrieve the created record by ERP supplier ID.</td></tr>
+  <tr><td><code>list_supplier_records</code></td><td>List downstream records for the reviewer ERP view.</td></tr>
+</table>
+
+<h2>11.2 Mapping and provenance</h2>
+<p>The ERP preview prefers reviewed/corrected evidence for supported fields, falling back to supplier-entered values, and labels each source as system-generated, supplier-entered, reviewed evidence, or unavailable. The supplier reference is generated from the case UUID. Category/subcategory remain supplier selections. The stored case retains the final ERP payload and returned ERP ID.</p>
+
+<h2>11.3 Approval and retry semantics</h2>
+<div class="diagram"><pre>Reviewer clicks Approve
+      │
+      ├─ recompute all compliance results; require all PASS
+      ├─ build ERP preview with source map
+      ├─ validate_supplier_record
+      ├─ create_supplier_record (idempotency key = supplier case ID)
+      ├─ persist ERP link + sanitized tool audit
+      └─ set supplier APPROVED and record reviewer decision
+
+ERP unavailable / validation error → approval remains incomplete → safe retry</pre></div>
+<p class="caption">Figure 7. Idempotency prevents a repeated approval attempt from creating duplicate downstream records.</p>
+
+<h2>11.4 Audit and privacy</h2>
+<p>Every tool attempt records operation, attempt number, status, latency, safe error code, requested field names, and limited response facts. Raw tax and bank values are deliberately excluded from the integration attempt summaries. Langfuse receives tool outcome metadata when configured.</p>
+
+<h1 id="security">12. Security, privacy, and audit controls</h1>
+
+<h2>12.1 Implemented controls</h2>
+<table>
+  <tr><th>Area</th><th>Control</th></tr>
+  <tr><td>Authentication</td><td>Supplier passwords use scrypt with random 16-byte salts; bearer tokens are random, only SHA-256 hashes are stored, and sessions expire after seven days.</td></tr>
+  <tr><td>Authorization</td><td>FastAPI dependencies enforce supplier, reviewer, and administrator roles; supplier application lookup binds the account to its case.</td></tr>
+  <tr><td>Secrets</td><td>Provider and staff credentials are environment-backed <code>SecretStr</code> values; the real <code>.env</code> is ignored by Git.</td></tr>
+  <tr><td>Input/file controls</td><td>Pydantic validation, content-type allow-list, size cap, one active type, UUID storage names, basename-only original names, path-root enforcement.</td></tr>
+  <tr><td>Integrity</td><td>SHA-256 digest is persisted at upload and verified before original-file delivery.</td></tr>
+  <tr><td>AI privacy boundary</td><td>Deterministic typed-placeholder redaction runs before external model and embedding calls.</td></tr>
+  <tr><td>Retrieval isolation</td><td>Every Chroma query includes a supplier filter before ranking.</td></tr>
+  <tr><td>Telemetry privacy</td><td>Supplier IDs are hashed; filenames/content are excluded by default; content capture defaults off.</td></tr>
+  <tr><td>Auditability</td><td>Uploads, viewing, extraction, processing, review, compliance, decisions, and ERP operations produce persistent events/runs.</td></tr>
+  <tr><td>Browser response</td><td>Original evidence uses private/no-store cache control and <code>nosniff</code>.</td></tr>
+</table>
+
+<h2>12.2 PII redaction scope</h2>
+<p>Current regular expressions cover Indian GSTIN, PAN, CIN, email, Indian-format mobile numbers, and 12–18 digit bank account numbers. Values are replaced with stable per-document typed placeholders such as <code>[GSTIN_1]</code>. A local map restores placeholders in structured results after the provider responds.</p>
+<div class="warning"><strong>Residual risk:</strong> regex redaction is not a complete sensitive-data discovery system. Names, addresses, unusual phone formats, account numbers outside the pattern, free-form identifiers, and OCR errors may pass through. Production use needs a formal data classification/DLP design, provider agreements, regional controls, and testing against representative documents.</div>
+
+<h2>12.3 Audit model</h2>
+<p><code>AuditEvent</code> captures business actions; <code>AiRun</code> captures AI operational evidence; <code>ErpToolAttempt</code> captures integration attempts; document and field reviewer columns capture the latest human disposition. Together they answer who/what/when/source questions without exposing extracted document text in general API responses.</p>
+
+<h2>12.4 Demo-mode security posture</h2>
+<p>Reviewer and administrator authentication are disabled by default, enabling one-click role sessions for demonstrations. The database uses a simple Compose credential, traffic is HTTP, metrics and API documentation are public, session tokens live in local storage, and files use a local volume. These are deliberate usability choices for local demonstration, not acceptable production defaults.</p>
+
+<h1 id="observability">13. Observability and quality evaluation</h1>
+
+<h2>13.1 Health and metrics</h2>
+<p><code>GET /api/health</code> checks PostgreSQL with <code>SELECT 1</code> and calls the Chroma heartbeat. The result is healthy only when both dependencies connect. Prometheus metrics include:</p>
+<ul>
+  <li>HTTP request count, duration, status, and in-progress requests;</li>
+  <li>AI call count/duration and input/output tokens;</li>
+  <li>processing-run outcomes, RAG questions and retrieved-chunk distribution;</li>
+  <li>compliance status counts and supplier decisions;</li>
+  <li>dependency health gauges.</li>
+</ul>
+
+<h2>13.2 Administrator observability</h2>
+<p>The admin API aggregates a configurable time window of provider/model/prompt usage, successes/failures/in-progress runs, tokens, average and P95 latency, question grounding/not-found behavior, retrieval counts, native/OCR document counts, OCR pages, extraction failures, ERP attempts/failures/latency, and recent runs. It exposes a configured Langfuse dashboard link without disclosing credentials.</p>
+
+<h2>13.3 Langfuse tracing</h2>
+<p>Tracing is optional and failure-tolerant. Workflow families cover document extraction, supplier document processing/RAG, supplier/reviewer assistants, and ERP MCP calls. Content capture defaults false; operational metadata, model, prompt version, token usage, latencies, scores, release, and a non-reversible supplier subject label support debugging and cost analysis. Telemetry exceptions do not change application behavior.</p>
+
+<h2>13.4 Evaluation assets</h2>
+<p>The repository contains generated evaluation documents, ground truth, and scripts for repeatable extraction/Q&amp;A checks, plus a Promptfoo runbook. Historical project notes report a v3 evaluation of 36/36 field checks and 24/24 Q&amp;A checks with complete citation, not-found, and supplier-isolation accuracy. Those figures are historical evidence rather than a result rerun during this documentation pass; they should be regenerated against any release candidate.</p>
+
+<h1 id="deployment">14. Deployment and configuration</h1>
+
+<h2>14.1 Docker topology</h2>
+<div class="diagram"><pre>Host :5173 ─► frontend (Nginx :80) ─► backend (FastAPI :8000) ─► database (:5432 internal)
+                                             │       │
+                                             │       ├─ /app/uploads  (uploads_data)
+                                             │       └─ /app/data/chroma (chroma_data)
+                                             │
+                                             └─► mock-erp-mcp (:8010 internal) ─► same PostgreSQL
+
+Host :8000 ────────────────────────────────► backend (direct API/docs/metrics access)</pre></div>
+<p class="caption">Figure 8. Four Compose services and three persistent volumes. PostgreSQL is not published to the host.</p>
+
+<h2>14.2 Container build</h2>
+<ul>
+  <li>Backend image: Python 3.13 slim, non-root <code>vendorlens</code> user, Tesseract English, cached tokenizer encoding, Uvicorn entrypoint.</li>
+  <li>Backend startup: run <code>alembic upgrade head</code>, then serve the API; the same image starts the ERP service when <code>SERVICE_ROLE=mock-erp-mcp</code>.</li>
+  <li>Frontend build: Node 22 Alpine runs <code>npm ci</code> and the production Vite build; Nginx serves the result.</li>
+  <li>Compose waits for PostgreSQL, backend, ERP, and frontend health checks in dependency order.</li>
+</ul>
+
+<h2>14.3 Primary configuration</h2>
+<table class="small">
+  <tr><th>Group</th><th>Key settings</th><th>Notes</th></tr>
+  <tr><td>Application</td><td><code>APP_ENV</code>, <code>DATABASE_URL</code>, <code>FRONTEND_ORIGIN</code>, <code>UPLOAD_DIR</code>, <code>CHROMA_PATH</code></td><td>Compose overrides storage/database addresses with container-safe values.</td></tr>
+  <tr><td>Authentication</td><td><code>REVIEWER_AUTH_ENABLED</code>, <code>ADMIN_AUTH_ENABLED</code> and credentials</td><td>Both flags default false for one-click demo access; supplier auth is always enabled.</td></tr>
+  <tr><td>OpenRouter</td><td>API key, base URL, extraction/answer/embedding models, optional attribution headers</td><td>Takes priority when the key is set.</td></tr>
+  <tr><td>Azure OpenAI</td><td>API key, endpoint, API version, deployment names</td><td>Used only when OpenRouter is not configured.</td></tr>
+  <tr><td>RAG</td><td>chunk 500, overlap 75, top K 4, max distance 0.72</td><td>Changing embedding vector dimensions requires index recreation and reprocessing.</td></tr>
+  <tr><td>OCR</td><td>enabled, language, DPI, native thresholds, image coverage, page cap</td><td>Defaults reside in typed backend settings.</td></tr>
+  <tr><td>ERP</td><td><code>MOCK_ERP_MCP_URL</code>, timeout</td><td>Compose routes to the internal service; empty uses in-process implementation.</td></tr>
+  <tr><td>Langfuse</td><td>enabled, keys, URL, dashboard URL, release, content capture</td><td>Optional; content capture should remain false unless explicitly approved.</td></tr>
+</table>
+
+<h2>14.4 Standard startup</h2>
+<ol>
+  <li>Copy <code>backend/.env.example</code> to <code>backend/.env</code>.</li>
+  <li>Configure one AI provider; keep secrets only in the ignored environment file or a production secrets manager.</li>
+  <li>Run <code>docker compose up --build -d</code>.</li>
+  <li>Open <code>http://localhost:5173</code>; verify <code>http://localhost:8000/api/health</code>.</li>
+</ol>
+
+<h1 id="testing">15. Testing and verification</h1>
+
+<h2>15.1 Automated test inventory</h2>
+<p>The backend contains 79 test functions across 18 modules. Coverage areas include:</p>
+<table>
+  <tr><th>Area</th><th>Representative verification</th></tr>
+  <tr><td>Authentication/roles</td><td>Supplier portal journeys and staff access boundaries.</td></tr>
+  <tr><td>Documents/OCR</td><td>Uploads, extraction errors, lifecycle, content access, and scanned-document journey.</td></tr>
+  <tr><td>AI provider</td><td>Provider selection and configuration behavior.</td></tr>
+  <tr><td>Extraction quality</td><td>Null normalization, consolidation, conflicts, resilient per-document processing.</td></tr>
+  <tr><td>RAG</td><td>Chunking, redaction, retrieval, citations, not-found and supplier isolation.</td></tr>
+  <tr><td>Assistants</td><td>Scope control, supplier answers, persistent reviewer case assistant.</td></tr>
+  <tr><td>Policy/compliance</td><td>Catalogue integrity, objective evaluators, review gates, approval readiness.</td></tr>
+  <tr><td>ERP</td><td>MCP tool behavior, validation, idempotency, creation and retrieval.</td></tr>
+  <tr><td>Operations</td><td>Metrics and privacy-safe tracing behavior.</td></tr>
+</table>
+
+<h2>15.2 Frontend verification</h2>
+<p>The frontend defines <code>npm run lint</code> and <code>npm run build</code>; the production build includes TypeScript project compilation before Vite bundling. No browser end-to-end framework is currently declared in <code>package.json</code>, so the highest-risk cross-page workflows depend on backend journey tests and manual demonstration.</p>
+
+<h2>15.3 Recommended release gate</h2>
+<ol>
+  <li>Apply Alembic migrations to a clean database and verify current head.</li>
+  <li>Run the full backend suite and frontend lint/build.</li>
+  <li>Start all Compose services and verify health endpoints.</li>
+  <li>Run a representative native, scanned, and mixed PDF journey.</li>
+  <li>Run the quality corpus/Promptfoo checks for extraction, grounded answers, citations, not-found behavior, and isolation.</li>
+  <li>Verify supplier correction/resubmission, evidence review, all-pass approval, ERP idempotent retry, and downstream retrieval.</li>
+  <li>Inspect Prometheus and Langfuse results for the candidate release.</li>
+</ol>
+
+<h1 id="limitations">16. Constraints, risks, and production readiness</h1>
+
+<h2>16.1 Current constraints</h2>
+<ul>
+  <li>Synthetic India-only policy, one primary subcategory, and mock downstream integration.</li>
+  <li>Background AI work runs in the API process, without a durable job queue, distributed lock, or worker autoscaling.</li>
+  <li>Local filesystem and embedded Chroma persistence assume a single shared runtime volume.</li>
+  <li>Regex PII redaction and OCR accuracy are document-dependent.</li>
+  <li>Provider/model outputs remain probabilistic even with schemas and prompts; human verification is essential.</li>
+  <li>Demo-mode staff access, browser local-storage tokens, public docs/metrics, and HTTP are not production controls.</li>
+  <li>There is no declared browser end-to-end, load, penetration, accessibility, or disaster-recovery test suite.</li>
+</ul>
+
+<h2>16.2 Risk register and recommended treatment</h2>
+<table class="small">
+  <tr><th>Risk</th><th>Impact</th><th>Recommended treatment before production</th></tr>
+  <tr><td>Weak/demo identity model</td><td>Unauthorized staff or session access.</td><td>OIDC/SAML SSO, MFA, short-lived secure HttpOnly cookies, CSRF strategy, centralized RBAC/ABAC, revocation and login audit.</td></tr>
+  <tr><td>Supplier documents are sensitive</td><td>Privacy, fraud, contractual and regulatory exposure.</td><td>Encrypted object storage, KMS, malware/CDR scanning, DLP, retention/deletion schedules, legal basis, access review and download watermarking where appropriate.</td></tr>
+  <tr><td>Incomplete PII detection</td><td>Sensitive content may reach external AI/telemetry.</td><td>Formal data inventory, stronger DLP/entity recognition, provider zero-retention terms, regional routing, test corpus and privacy impact assessment.</td></tr>
+  <tr><td>In-process background work</td><td>Lost work on restart and API resource contention.</td><td>Durable queue/worker, idempotent job records, retries/backoff, concurrency limits, dead-letter handling and progress API.</td></tr>
+  <tr><td>Single-node local storage</td><td>Loss, inconsistency, and limited scaling.</td><td>Managed PostgreSQL, versioned object store, managed vector service or backed-up cluster, transactional outbox and reconciliation jobs.</td></tr>
+  <tr><td>AI quality drift</td><td>Incorrect extraction or grounded answer regressions.</td><td>Release-pinned models/prompts, expanded golden datasets, threshold gates, drift monitoring, reviewer feedback analytics and rollback.</td></tr>
+  <tr><td>Policy governance</td><td>Incorrect or unapproved onboarding decisions.</td><td>Policy-owner approval, signed/versioned catalogues, effective dates, change impact analysis, migration rules, case snapshot retention.</td></tr>
+  <tr><td>Operational exposure</td><td>Information leakage through docs/metrics/errors.</td><td>Private networks, TLS, gateway/WAF, authenticated metrics/docs, structured safe logging, SIEM alerts and rate limits.</td></tr>
+</table>
+
+<h2>16.3 Suggested evolution sequence</h2>
+<ol>
+  <li><strong>Security baseline:</strong> enterprise identity, TLS, secrets manager, private operational endpoints, object-store encryption and scanning.</li>
+  <li><strong>Reliability baseline:</strong> durable worker queue, job state/retry, managed persistence, backups and restore tests.</li>
+  <li><strong>Governance baseline:</strong> formal policy approvals, retention and privacy controls, model/prompt release management.</li>
+  <li><strong>Quality baseline:</strong> browser E2E, load/security/accessibility tests, expanded OCR and adversarial AI evaluation.</li>
+  <li><strong>Integration baseline:</strong> authenticated enterprise ERP adapter, schemas/contracts, reconciliation, non-repudiation and operational ownership.</li>
+</ol>
+
+<h1 id="operations">17. Operations runbook</h1>
+
+<h2>17.1 Service checks</h2>
+<table>
+  <tr><th>Check</th><th>Command or URL</th><th>Expected result</th></tr>
+  <tr><td>Container state</td><td><code>docker compose ps</code></td><td>Database, backend, mock ERP, and frontend running/healthy.</td></tr>
+  <tr><td>Application</td><td><code>http://localhost:5173</code></td><td>Role landing page.</td></tr>
+  <tr><td>API health</td><td><code>http://localhost:8000/api/health</code></td><td><code>status=healthy</code>, database/chroma connected.</td></tr>
+  <tr><td>API documentation</td><td><code>http://localhost:8000/docs</code></td><td>OpenAPI UI in demo environment.</td></tr>
+  <tr><td>Metrics</td><td><code>http://localhost:8000/metrics/</code></td><td>Prometheus exposition.</td></tr>
+</table>
+
+<h2>17.2 Routine commands</h2>
+<ul>
+  <li>Logs: <code>docker compose logs -f backend</code> (or frontend/database/mock-erp-mcp).</li>
+  <li>Stop without deleting data: <code>docker compose down</code>.</li>
+  <li>Restart: <code>docker compose up -d</code>.</li>
+  <li>Rebuild: <code>docker compose up --build -d</code>.</li>
+  <li>Reload backend environment: <code>docker compose up -d --force-recreate backend</code>.</li>
+  <li>Migration state: <code>docker compose exec backend python -m alembic current</code>.</li>
+</ul>
+
+<h2>17.3 Diagnostic sequence</h2>
+<ol>
+  <li>Check Compose health and backend logs.</li>
+  <li>Call <code>/api/health</code> to isolate PostgreSQL/Chroma connectivity.</li>
+  <li>Use admin observability to locate failed AI runs, models/prompts, OCR failures, and ERP attempts.</li>
+  <li>Inspect the supplier’s document status, AI extraction/index status, last run and audit events.</li>
+  <li>For OCR failures, verify Tesseract and the configured language pack, then retry text extraction.</li>
+  <li>For AI configuration changes, restart the backend because the settings/client are cached.</li>
+  <li>For ERP failure, fix connectivity/validation and retry approval; the idempotency key makes the create safe.</li>
+</ol>
+
+<h2>17.4 Data reset caution</h2>
+<p><code>docker compose down -v</code> destroys PostgreSQL, upload, and Chroma volumes. It should be used only when a complete local reset is intended. Ordinary <code>docker compose down</code> preserves the volumes.</p>
+
+<h1 id="references">18. Repository reference map and glossary</h1>
+
+<h2>18.1 Primary implementation references</h2>
+<table class="small">
+  <tr><th>Topic</th><th>File or directory</th></tr>
+  <tr><td>Overview and setup</td><td><code>README.md</code>, <code>DOCKER_SETUP.md</code>, <code>MONITORING_SETUP.md</code></td></tr>
+  <tr><td>Deployment</td><td><code>compose.yaml</code>, <code>Dockerfile</code>, <code>frontend/nginx.conf</code>, <code>backend/docker-entrypoint.sh</code></td></tr>
+  <tr><td>API/config/data</td><td><code>backend/app/main.py</code>, <code>config.py</code>, <code>models.py</code>, <code>schemas.py</code></td></tr>
+  <tr><td>HTTP workflows</td><td><code>backend/app/routers/</code></td></tr>
+  <tr><td>Domain services</td><td><code>backend/app/services/</code></td></tr>
+  <tr><td>AI instructions</td><td><code>backend/app/prompts/</code></td></tr>
+  <tr><td>Policy</td><td><code>backend/policy/requirements.json</code>, <code>backend/policy/source/</code>, <code>backend/policy/README.md</code></td></tr>
+  <tr><td>Database history</td><td><code>backend/alembic/versions/0001…0014</code></td></tr>
+  <tr><td>Frontend</td><td><code>frontend/src/App.tsx</code>, <code>auth/</code>, <code>api/</code>, <code>pages/</code>, <code>components/</code></td></tr>
+  <tr><td>Tests/evaluation</td><td><code>backend/tests/</code>, <code>scripts/run_quality_evaluation.py</code>, <code>QUALITY_EVALUATION.md</code></td></tr>
+</table>
+
+<h2>18.2 Glossary</h2>
+<table>
+  <tr><th>Term</th><th>Meaning in VendorLens</th></tr>
+  <tr><td>AI run</td><td>A persisted extraction or question operation with model, prompt, tokens, latency, status and safe diagnostics.</td></tr>
+  <tr><td>Canonical field</td><td>The selected supplier-level value after document-source priority, confidence, duplicate and conflict handling.</td></tr>
+  <tr><td>Checklist</td><td>Baseline plus subcategory-specific evidence requirements resolved from the policy catalogue.</td></tr>
+  <tr><td>Compliance result</td><td>A current rule/check status of pass, fail, or needs review, with evidence.</td></tr>
+  <tr><td>MCP</td><td>Model Context Protocol-style named-tool boundary; here used as explicit JSON-RPC integration with a mock ERP, not model-directed execution.</td></tr>
+  <tr><td>OCR</td><td>Optical character recognition performed locally by Tesseract for scanned/image-dominant pages.</td></tr>
+  <tr><td>RAG</td><td>Retrieval-augmented generation: answer generation constrained by retrieved supplier or policy evidence.</td></tr>
+  <tr><td>Requirements snapshot</td><td>The resolved checklist frozen on first submission for future auditability.</td></tr>
+  <tr><td>Typed placeholder</td><td>A redacted marker such as <code>[PAN_1]</code> that preserves value type and document-local consistency without sending the original value.</td></tr>
+</table>
+
+<div class="success"><strong>Technical conclusion.</strong> VendorLens demonstrates a coherent human-in-the-loop onboarding architecture: evidence is ingested with provenance, AI output is bounded and reviewable, policy checks remain explicit, downstream creation is deterministic and idempotent, and operational evidence is retained. Its architecture is suitable for a capstone demonstration and a strong prototype foundation, provided the production-readiness controls in Section 16 are treated as prerequisites for real supplier data.</div>
+
+<p class="footer-note">VendorLens AI — Project Technical Document · Version 1.0 · Baseline f54fc07 · Prepared 28 September 2026</p>
+</body>
+</html>

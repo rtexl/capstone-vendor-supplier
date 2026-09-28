@@ -5,10 +5,10 @@ VendorLens is an AI-assisted supplier onboarding application. It turns registrat
 ## What it does
 
 - Creates supplier cases and accepts one document in each required category.
-- Extracts selectable PDF text, redacts PII before AI calls, and stores supplier-scoped ChromaDB embeddings.
+- Extracts native PDF/text content and uses page-selective local Tesseract OCR for scanned PDFs, PNGs and JPEGs; records OCR provenance, redacts PII before AI calls, and stores supplier-scoped ChromaDB embeddings.
 - Uses OpenRouter when configured, with Azure OpenAI as the configuration fallback, for structured extraction, embeddings, and cited document Q&A.
 - Shows confidence, source pages, conflicts, compliance checks, and editable fields.
-- Records approval or rejection decisions and a mock ERP handoff in PostgreSQL.
+- Validates and creates supplier master records through a separate mock ERP MCP service, with idempotent retries and retrieval.
 
 ## Architecture
 
@@ -24,16 +24,24 @@ Document text extraction -> PII redaction -> OpenRouter or Azure AI
 Compliance rules + audit trail -> human decision -> ERP handoff
 ```
 
-Langfuse traces AI calls, Promptfoo evaluates answer quality, and Prometheus exposes application metrics.
+## Mock ERP MCP boundary
+
+Docker Compose runs `mock-erp-mcp` as a separate stateless JSON-RPC service. The portal invokes named MCP tools; an LLM never controls supplier creation.
+
+- `validate_supplier_record` checks required master data, category mappings, and duplicate tax/bank references.
+- `create_supplier_record` runs only after explicit reviewer approval and uses the portal supplier reference as an idempotency key.
+- `get_supplier_record` and `list_supplier_records` prove that approved records are independently retrievable from the downstream supplier master.
+
+Every call stores a sanitized tool-attempt audit with status, latency, attempt number, and error code. Raw tax and bank values are not copied into the integration audit log. If the ERP is unavailable, approval remains incomplete and the reviewer can retry safely.
+
+The authenticated admin portal summarizes AI runs, tokens, model/prompt usage, latency, RAG grounding, OCR, and ERP tool health. Langfuse adds correlated, privacy-safe workflow traces and cost analysis; Promptfoo evaluates answer quality; Prometheus exposes application metrics.
 
 ## Run with Docker (recommended for a fresh clone)
 
 1. Copy `backend/.env.example` to `backend/.env`.
 2. Add either an OpenRouter key or the existing Azure OpenAI settings.
 3. Run `docker compose up --build -d` from the repository root.
-4. Open the prototype workspaces in separate tabs:
-   - Supplier portal: `http://localhost:5173/supplier`
-   - Reviewer workspace: `http://localhost:5173/reviewer`
+4. Open `http://localhost:5173`.
 
 See [DOCKER_SETUP.md](DOCKER_SETUP.md) for the complete first-clone guide, verification commands, data-volume behavior, and troubleshooting.
 

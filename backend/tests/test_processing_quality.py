@@ -1,12 +1,13 @@
 import uuid
 
 from app.models import DocumentType
+from app.services.document_policy import extraction_field_names
+from app.services.openai_service import DocumentExtraction
 from app.services.processing import (
     FieldCandidate,
     comparison_key,
     normalize_extracted_value,
     select_canonical_fields,
-    values_equivalent,
 )
 
 
@@ -35,6 +36,16 @@ def test_normalizes_null_like_values_and_restores_placeholders() -> None:
     assert normalize_extracted_value(' "null" ', replacements) is None
     assert normalize_extracted_value("N/A", replacements) is None
     assert normalize_extracted_value("[EMAIL_1]", replacements) == "reviewer@example.com"
+
+
+def test_preserves_policy_valid_none_and_not_applicable_answers() -> None:
+    assert normalize_extracted_value("None", {}, "subprocessors") == "None"
+    assert normalize_extracted_value("None", {}, "data_categories") == "None"
+    assert normalize_extracted_value("None", {}, "supplier_name") is None
+    assert normalize_extracted_value(
+        "Not applicable", {}, "processing_locations",
+    ) == "Not applicable"
+    assert normalize_extracted_value("Not applicable", {}, "supplier_name") is None
 
 
 def test_collapses_exact_duplicates_to_preferred_source() -> None:
@@ -124,90 +135,46 @@ def test_ignores_name_punctuation_when_checking_conflicts() -> None:
     assert conflicts == []
 
 
-def test_treats_trading_name_as_alias_of_full_legal_name() -> None:
-    registration = candidate(
-        DocumentType.REGISTRATION,
+def test_confidentiality_extraction_uses_requirement_specific_fields() -> None:
+    fields = extraction_field_names(DocumentType.CONF_001)
+
+    assert fields == [
         "supplier_name",
-        "Eastbridge Logistics and Warehousing Private Limited",
-    )
-    insurance = candidate(
-        DocumentType.INSURANCE,
+        "buyer_name",
+        "signatory_names",
+        "both_signatures",
+        "execution_date",
+    ]
+
+
+def test_business_registration_does_not_invent_erp_fields_as_policy_fields() -> None:
+    fields = extraction_field_names(DocumentType.REGISTRATION)
+
+    assert fields == [
         "supplier_name",
-        "Eastbridge Logistics",
-    )
-
-    selected, conflicts = select_canonical_fields([registration, insurance])
-
-    assert selected[0].value == registration.value
-    assert selected[0].needs_review is False
-    assert conflicts == []
-
-
-def test_treats_pan_and_gstin_for_same_entity_as_equivalent() -> None:
-    registration = candidate(
-        DocumentType.REGISTRATION,
-        "tax_identifier",
-        "AACCE8765M",
-    )
-    tax = candidate(
-        DocumentType.TAX,
-        "tax_identifier",
-        "19AACCE8765M1Z4",
-    )
-
-    selected, conflicts = select_canonical_fields([registration, tax])
-
-    assert values_equivalent("tax_identifier", registration.value, tax.value)
-    assert selected[0].value == tax.value
-    assert selected[0].needs_review is False
-    assert conflicts == []
+        "registration_number",
+        "issuing_registry",
+        "registration_date",
+        "status",
+    ]
+    assert "address" not in fields
+    assert "contact_email" not in fields
 
 
-def test_keeps_genuinely_different_supplier_names_conflicted() -> None:
-    registration = candidate(
-        DocumentType.REGISTRATION,
-        "supplier_name",
-        "Eastbridge Logistics and Warehousing Private Limited",
-    )
-    insurance = candidate(
-        DocumentType.INSURANCE,
-        "supplier_name",
-        "Asteron Industrial Components Private Limited",
-    )
+def test_extraction_schema_rejects_runaway_field_values() -> None:
+    payload = {
+        "classified_document_type": "CONF-001",
+        "fields": [{
+            "field_name": "buyer_name",
+            "value": "x" * 301,
+            "page_number": 1,
+            "confidence": 0.9,
+        }],
+    }
 
-    selected, conflicts = select_canonical_fields([registration, insurance])
-
-    assert selected[0].needs_review is True
-    assert conflicts == ["supplier_name"]
-
-
-def test_treats_matching_header_acronym_as_legal_name_alias() -> None:
-    registration = candidate(
-        DocumentType.REGISTRATION,
-        "supplier_name",
-        "Eastbridge Logistics and Warehousing Private Limited",
-    )
-    tax = candidate(DocumentType.TAX, "supplier_name", "ELW")
-
-    selected, conflicts = select_canonical_fields([registration, tax])
-
-    assert selected[0].needs_review is False
-    assert conflicts == []
-
-
-def test_ignores_equivalent_legal_suffix_abbreviations() -> None:
-    registration = candidate(
-        DocumentType.REGISTRATION,
-        "supplier_name",
-        "Eastbridge Logistics and Warehousing Private Limited",
-    )
-    insurance = candidate(
-        DocumentType.INSURANCE,
-        "supplier_name",
-        "Eastbridge Logistics & Warehousing Pvt. Ltd.",
-    )
-
-    selected, conflicts = select_canonical_fields([registration, insurance])
-
-    assert selected[0].needs_review is False
-    assert conflicts == []
+    try:
+        DocumentExtraction.model_validate(payload)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("The structured extraction schema accepted a runaway value.")

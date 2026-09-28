@@ -7,12 +7,8 @@ interface StatusChipProps {
 
 const labels: Record<StatusChipProps['status'], string> = {
   new: 'New',
-  submitted: 'Submitted',
-  under_review: 'Under review',
   processing: 'Processing',
   needs_review: 'Needs review',
-  changes_requested: 'Changes requested',
-  resubmitted: 'Resubmitted',
   approved: 'Approved',
   rejected: 'Rejected',
   ready: 'Ready',
@@ -24,9 +20,10 @@ export function StatusChip({ status }: StatusChipProps) {
     ? 'success'
     : status === 'failed' || status === 'rejected'
       ? 'error'
-      : status === 'needs_review' || status === 'changes_requested' || status === 'resubmitted'
+      : status === 'needs_review'
         ? 'warning'
         : 'default'
 
   return <Chip label={labels[status]} color={color} size="small" />
 }
+

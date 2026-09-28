@@ -1,782 +1,524 @@
 import ArrowBackRoundedIcon from '@mui/icons-material/ArrowBackRounded'
 import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded'
-import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded'
-import EditRoundedIcon from '@mui/icons-material/EditRounded'
-import FactCheckRoundedIcon from '@mui/icons-material/FactCheckRounded'
-import HowToRegRoundedIcon from '@mui/icons-material/HowToRegRounded'
 import BlockRoundedIcon from '@mui/icons-material/BlockRounded'
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded'
-import CloudUploadRoundedIcon from '@mui/icons-material/CloudUploadRounded'
-import OpenInNewRoundedIcon from '@mui/icons-material/OpenInNewRounded'
-import QuestionAnswerRoundedIcon from '@mui/icons-material/QuestionAnswerRounded'
-import ReplayRoundedIcon from '@mui/icons-material/ReplayRounded'
+import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded'
+import EditRoundedIcon from '@mui/icons-material/EditRounded'
+import ExpandLessRoundedIcon from '@mui/icons-material/ExpandLessRounded'
+import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
+import FactCheckRoundedIcon from '@mui/icons-material/FactCheckRounded'
+import FlagRoundedIcon from '@mui/icons-material/FlagRounded'
+import HowToRegRoundedIcon from '@mui/icons-material/HowToRegRounded'
 import {
-  Alert,
-  Box,
-  Button,
-  Card,
-  CardContent,
-  Chip,
-  CircularProgress,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogContentText,
-  DialogTitle,
-  Divider,
-  IconButton,
-  LinearProgress,
-  Stack,
-  TextField,
-  Tooltip,
-  Typography,
+  Alert, Box, Button, ButtonBase, Card, CardContent, Chip, CircularProgress,
+  Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Divider,
+  IconButton, Stack, TextField, Tooltip, Typography,
 } from '@mui/material'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api/client'
-import type {
-  DocumentType,
-  ExtractedField,
-  SupplierDetail,
-  SupplierDocument,
-  SupplierQuestionResponse,
-} from '../api/types'
+import { downloadOriginal, openOriginal } from '../api/openOriginal'
+import { evidenceDownloadFilename, supplierReference } from '../api/supplierReference'
+import type { ComplianceResult, DocumentRevision, ErpRecord, ErpValidation, ExtractedField, ProcessSupplierResponse, SupplierDetail, SupplierDocument } from '../api/types'
 import { StatusChip } from '../components/StatusChip'
-
-const documentLabels: Record<DocumentType, string> = {
-  registration: 'Supplier registration form',
-  tax: 'Tax registration certificate',
-  insurance: 'Insurance certificate',
-}
+import { ErpRecordDialog } from '../components/ErpRecordDialog'
+import { erpFieldLabels } from '../components/erpRecordLabels'
 
 const fieldLabels: Record<string, string> = {
-  supplier_name: 'Supplier name',
-  address: 'Registered address',
-  country: 'Country',
-  tax_identifier: 'Tax ID',
-  contact_name: 'Contact name',
-  contact_email: 'Contact email',
-  contact_phone: 'Contact phone',
-  insurance_provider: 'Insurance provider',
-  insurance_expiry_date: 'Insurance expiry',
-  payment_terms: 'Payment terms',
+  supplier_name: 'Supplier name', address: 'Registered address', country: 'Country',
+  tax_identifier: 'Tax reference', contact_name: 'Contact name', contact_email: 'Contact email',
+  bank_account_number: 'Bank account number', bank_ifsc: 'Bank IFSC',
+  insurance_provider: 'Insurance provider', insurance_expiry_date: 'Insurance expiry', payment_terms: 'Payment terms',
 }
 
-const ruleLabels: Record<string, string> = {
-  document_completeness: 'Required documents',
-  insurance_expiry: 'Insurance validity',
-  contact_email: 'Contact email',
-  supplier_name_match: 'Supplier name match',
-  redaction_boundary: 'PII redaction boundary',
-  field_review: 'Human field review',
+type RequirementFilter = 'attention' | 'matched' | 'verified' | 'flagged'
+type RequirementItem = SupplierDetail['requirements']['documents'][number]
+
+function displayStatus(status: string) { return status.replaceAll('_', ' ') }
+function fieldLabel(name: string) { return fieldLabels[name] ?? name.replaceAll('_', ' ').replace(/\b\w/g, (character) => character.toUpperCase()) }
+function normalizedFieldKey(name: string) { return name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') }
+
+function comparisonValueMatches(fieldName: string, observed: unknown, expected: unknown) {
+  if (observed == null || observed === '' || expected == null || expected === '') return false
+  const left = String(observed).trim()
+  const right = String(expected).trim()
+  if (fieldName === 'bank_account_number') return left === right
+  if (['supplier_name', 'tax_identifier', 'bank_ifsc'].includes(fieldName)) {
+    const normalize = (value: string) => value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, '')
+    return normalize(left) === normalize(right)
+  }
+  return left.toLocaleLowerCase() === right.toLocaleLowerCase()
 }
 
-type FieldConflictDetail = {
-  field_name: string
-  selected_document: string | null
-  source_documents: (string | null)[]
-  source_document_types: string[]
+function ComparedValue({ value, comparison, highlight }: { value: unknown; comparison: unknown; highlight: boolean }) {
+  if (value == null || value === '') return <Typography component="span" variant="caption" color="error.dark" fontWeight={700}>Not found</Typography>
+  const displayed = String(value)
+  const compared = comparison == null ? '' : String(comparison)
+  if (!highlight || displayed.length !== compared.length) {
+    return <Typography component="span" variant="caption" fontFamily="monospace" fontWeight={highlight ? 700 : 500} sx={{ overflowWrap: 'anywhere' }}>{displayed}</Typography>
+  }
+  return (
+    <Typography component="span" variant="caption" fontFamily="monospace" fontWeight={500} sx={{ overflowWrap: 'anywhere' }}>
+      {[...displayed].map((character, index) => (
+        <Box
+          component="span"
+          key={`${character}-${index}`}
+          sx={character === compared[index] ? undefined : { bgcolor: 'error.light', color: 'error.contrastText', borderRadius: .5, px: .15, fontWeight: 800 }}
+        >
+          {character}
+        </Box>
+      ))}
+    </Typography>
+  )
 }
 
-type ErpTransfer = {
-  phase: 'uploading' | 'complete'
-  durationMs: number
-  erpSupplierId: string
+function policyOutcome(result: ComplianceResult): 'matched' | 'not_matched' | 'human_review' {
+  const assessment = String(result.evidence.ai_assessment)
+  if (result.status === 'pass' || assessment === 'human_verified' || assessment === 'matched') return 'matched'
+  if (result.status === 'fail' || ['not_matched', 'reviewer_flagged'].includes(assessment)) return 'not_matched'
+  return 'human_review'
+}
+
+function requirementStatus(document: SupplierDocument | undefined, checks: ComplianceResult[]): RequirementFilter {
+  if (document?.review_status === 'disputed') return 'flagged'
+  if (document?.review_status === 'verified') return 'verified'
+  if (!document || document.ai_extraction_status === 'failed' || document.ai_index_status === 'failed') return 'attention'
+  if (checks.some((check) => policyOutcome(check) !== 'matched')) return 'attention'
+  return 'matched'
+}
+
+function failureReason(message?: string) {
+  if (!message) return 'AI processing failed for one or more documents.'
+  const index = message.indexOf(' failed. ')
+  return index >= 0 ? message.slice(index + 9) : message
+}
+
+const erpLabels: Record<string, string> = {
+  ...erpFieldLabels,
+  supplier_reference: 'Supplier reference', legal_name: 'Legal name', registered_address: 'Registered address',
+  country: 'Country', tax_reference: 'Tax reference', contact_name: 'Contact name', contact_email: 'Contact email',
+  bank_account_number: 'Bank account', bank_ifsc: 'Bank IFSC', category: 'Category', subcategory: 'Subcategory',
+  insurance_provider: 'Insurance provider', insurance_expiry_date: 'Insurance expiry', payment_terms: 'Payment terms',
 }
 
 export function SupplierReviewPage() {
   const { supplierId = '' } = useParams()
   const [supplier, setSupplier] = useState<SupplierDetail | null>(null)
+  const [history, setHistory] = useState<DocumentRevision[]>([])
   const [loading, setLoading] = useState(true)
-  const [processing, setProcessing] = useState(false)
-  const [question, setQuestion] = useState('')
-  const [asking, setAsking] = useState(false)
-  const [questionResponse, setQuestionResponse] = useState<SupplierQuestionResponse | null>(null)
-  const [checkingCompliance, setCheckingCompliance] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [fieldToEdit, setFieldToEdit] = useState<ExtractedField | null>(null)
   const [editedValue, setEditedValue] = useState('')
   const [editedPage, setEditedPage] = useState(1)
-  const [savingField, setSavingField] = useState(false)
+  const [flagDocumentId, setFlagDocumentId] = useState<string | null>(null)
+  const [flagReason, setFlagReason] = useState('')
   const [decisionAction, setDecisionAction] = useState<'approve' | 'reject' | null>(null)
   const [rejectionReason, setRejectionReason] = useState('')
-  const [deciding, setDeciding] = useState(false)
-  const [startingReview, setStartingReview] = useState(false)
-  const [changesOpen, setChangesOpen] = useState(false)
-  const [changeReasons, setChangeReasons] = useState<Record<string, string>>({})
-  const [generalChangeReason, setGeneralChangeReason] = useState('')
-  const [requestingChanges, setRequestingChanges] = useState(false)
-  const [erpTransfer, setErpTransfer] = useState<ErpTransfer | null>(null)
-  const [erpProgress, setErpProgress] = useState(0)
-  const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
-
-  const uploadedDocumentTypes = new Set(supplier?.documents.map((document) => document.document_type) ?? [])
-  const allDocumentsReady = uploadedDocumentTypes.size === Object.keys(documentLabels).length
-    && supplier?.documents.every((document) => document.processing_status === 'ready')
-  const latestProcessingRun = supplier?.ai_runs.find((run) => run.run_type === 'processing')
-  const finalized = supplier?.status === 'approved' || supplier?.status === 'rejected'
-  const reviewActive = supplier?.status === 'under_review' || supplier?.status === 'needs_review'
-  const approvalReady = supplier?.compliance_results.length === Object.keys(ruleLabels).length
-    && supplier.compliance_results.every((result) => result.status === 'pass')
-
-  function fieldReviewMessage(field: ExtractedField, sourceDocument: SupplierDocument | undefined): string {
-    const conflictDetails = Array.isArray(latestProcessingRun?.details.field_conflict_details)
-      ? latestProcessingRun.details.field_conflict_details as FieldConflictDetail[]
-      : []
-    const conflict = conflictDetails.find((item) => item.field_name === field.field_name)
-    const mismatchFiles = Array.isArray(latestProcessingRun?.details.classification_mismatches)
-      ? latestProcessingRun.details.classification_mismatches as string[]
-      : []
-    const reasons: string[] = []
-
-    if (conflict) {
-      const sources = conflict.source_documents.filter((filename): filename is string => Boolean(filename))
-      const otherSources = sources.filter((filename) => filename !== conflict.selected_document)
-      const sourceText = otherSources.length > 0 ? ` Another value was found in ${otherSources.join(', ')}.` : ''
-      reasons.push(
-        `Conflicting values were found across the uploaded documents. The displayed value was selected from ${conflict.selected_document ?? 'the highest-priority source'} based on document priority.${sourceText}`,
-      )
-    }
-    if (field.confidence < 0.75) {
-      reasons.push(`AI confidence is ${Math.round(field.confidence * 100)}%, below the 75% review threshold.`)
-    }
-    if (sourceDocument && mismatchFiles.includes(sourceDocument.filename)) {
-      reasons.push('The source document category did not match the category selected during upload.')
-    }
-    if (reasons.length === 0) {
-      reasons.push('The AI could not confirm this value with sufficient certainty from the source document.')
-    }
-
-    return `${reasons.join(' ')} Confirm the value against page ${field.page_number} before approval.`
-  }
+  const [selectedFilter, setSelectedFilter] = useState<RequirementFilter>('attention')
+  const [expandedRequirements, setExpandedRequirements] = useState<Set<string>>(new Set())
+  const [checkVisibility, setCheckVisibility] = useState<Record<string, boolean>>({})
+  const [erpValidation, setErpValidation] = useState<ErpValidation | null>(null)
+  const [erpValidationError, setErpValidationError] = useState('')
+  const [erpValidating, setErpValidating] = useState(false)
+  const [erpRecord, setErpRecord] = useState<ErpRecord | null>(null)
+  const [showErpRecord, setShowErpRecord] = useState(false)
 
   const loadSupplier = useCallback(async () => {
     try {
-      setSupplier(await api.getSupplier(supplierId))
+      const [detail, archived] = await Promise.all([api.getSupplier(supplierId), api.reviewerDocumentHistory(supplierId)])
+      setSupplier(detail)
+      setHistory(archived)
+      setErpValidating(true)
+      try {
+        setErpValidation(await api.validateErpRecord(supplierId))
+        setErpValidationError('')
+      } catch (validationError) {
+        setErpValidation(null)
+        setErpValidationError(validationError instanceof Error ? validationError.message : 'ERP validation could not be completed.')
+      } finally { setErpValidating(false) }
+      const policyChecks = detail.compliance_results.filter((result) => result.evidence.kind === 'policy_check')
+      const statuses = detail.requirements.documents.map((requirement) => requirementStatus(
+        detail.documents.find((document) => document.document_type === requirement.document_type),
+        policyChecks.filter((check) => check.evidence.requirement_id === requirement.requirement_id),
+      ))
+      setSelectedFilter((current) => statuses.includes(current) ? current
+        : statuses.includes('attention') ? 'attention'
+          : statuses.includes('matched') ? 'matched'
+            : statuses.includes('flagged') ? 'flagged' : 'verified')
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Supplier could not be loaded.')
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }, [supplierId])
 
   useEffect(() => { void loadSupplier() }, [loadSupplier])
 
-  const erpTransferPhase = erpTransfer?.phase
-  const erpTransferDuration = erpTransfer?.durationMs
-
-  useEffect(() => {
-    if (erpTransferPhase !== 'uploading' || !erpTransferDuration) return undefined
-
-    const startedAt = Date.now()
-    const progressTimer = window.setInterval(() => {
-      const elapsed = Date.now() - startedAt
-      setErpProgress(Math.min(96, Math.max(4, (elapsed / erpTransferDuration) * 100)))
-    }, 120)
-    const completionTimer = window.setTimeout(() => {
-      window.clearInterval(progressTimer)
-      setErpProgress(100)
-      setErpTransfer((current) => current ? { ...current, phase: 'complete' } : current)
-    }, erpTransferDuration)
-
-    return () => {
-      window.clearInterval(progressTimer)
-      window.clearTimeout(completionTimer)
-    }
-  }, [erpTransferDuration, erpTransferPhase])
-
-  const erpTransferStep = erpProgress < 25
-    ? 'Preparing approved supplier package'
-    : erpProgress < 65
-      ? 'Uploading supplier and document references'
-      : erpProgress < 90
-        ? 'Creating the ERP vendor master record'
-        : 'Verifying the ERP record link'
-
-  async function handleProcess() {
-    setProcessing(true)
-    setError('')
-    setNotice('')
-    setQuestionResponse(null)
-    try {
-      const result = await api.processSupplier(supplierId)
-      setNotice(`Processing complete: ${result.field_count} fields extracted and ${result.chunk_count} searchable chunks created.`)
-      await loadSupplier()
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Document processing failed.')
-      await loadSupplier()
-    } finally {
-      setProcessing(false)
-    }
-  }
-
-  async function handleAskQuestion() {
-    const trimmedQuestion = question.trim()
-    if (trimmedQuestion.length < 3) return
-    setAsking(true)
-    setError('')
-    setNotice('')
-    try {
-      const result = await api.askSupplierQuestion(supplierId, trimmedQuestion)
-      setQuestionResponse(result)
-      await loadSupplier()
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'The question could not be answered.')
-    } finally {
-      setAsking(false)
-    }
-  }
-
-  function openFieldEditor(field: ExtractedField) {
-    setFieldToEdit(field)
-    setEditedValue(field.value)
-    setEditedPage(field.page_number)
-  }
-
-  async function handleSaveField() {
-    if (!fieldToEdit || !editedValue.trim()) return
-    setSavingField(true)
-    setError('')
-    setNotice('')
-    try {
-      await api.updateExtractedField(supplierId, fieldToEdit.id, {
-        value: editedValue.trim(),
-        page_number: editedPage,
-      })
-      setFieldToEdit(null)
-      setNotice('Field correction saved. Run compliance checks again before approval.')
-      await loadSupplier()
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Field correction failed.')
-    } finally {
-      setSavingField(false)
-    }
-  }
-
-  async function handleRunCompliance() {
-    setCheckingCompliance(true)
-    setError('')
-    setNotice('')
-    try {
-      const result = await api.runCompliance(supplierId)
-      setNotice(result.approval_ready ? 'All compliance checks passed. The supplier is ready for approval.' : 'Compliance checks completed. Resolve the highlighted issues before approval.')
-      await loadSupplier()
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Compliance checks failed.')
-    } finally {
-      setCheckingCompliance(false)
-    }
-  }
-
-  async function handleDecision() {
-    if (!decisionAction) return
-    const approving = decisionAction === 'approve'
-    setDeciding(true)
-    setError('')
-    setNotice('')
-    try {
-      const result = approving
-        ? await api.approveSupplier(supplierId)
-        : await api.rejectSupplier(supplierId, rejectionReason.trim())
-      setDecisionAction(null)
-      setRejectionReason('')
-      if (approving) {
-        setErpProgress(4)
-        setErpTransfer({
-          phase: 'uploading',
-          durationMs: 4000 + Math.floor(Math.random() * 3001),
-          erpSupplierId: result.erp_supplier_id ?? 'Pending ERP ID',
-        })
-      } else {
-        setNotice(result.message)
+  const orderedEvidence = useMemo(() => {
+    if (!supplier) return []
+    const policyChecks = supplier.compliance_results.filter((result) => result.evidence.kind === 'policy_check')
+    return supplier.requirements.documents.map((requirement) => {
+      const document = supplier.documents.find((item) => item.document_type === requirement.document_type)
+      const checks = policyChecks.filter((check) => check.evidence.requirement_id === requirement.requirement_id)
+      return {
+        requirement, document, checks,
+        fields: supplier.extracted_fields.filter((field) => field.document_id === document?.id),
+        status: requirementStatus(document, checks),
       }
-      await loadSupplier()
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'The decision could not be completed.')
-    } finally {
-      setDeciding(false)
-    }
-  }
+    })
+  }, [supplier])
 
-  async function handleStartReview() {
-    setStartingReview(true)
-    setError('')
-    try {
-      const result = await api.startReview(supplierId)
-      setNotice(result.message)
-      await loadSupplier()
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'The review could not be started.')
-    } finally {
-      setStartingReview(false)
-    }
-  }
+  const latestProcessingRun = supplier?.ai_runs.find((run) => run.run_type === 'processing')
+  const finalized = supplier?.status === 'approved' || supplier?.status === 'rejected'
+  const complianceReady = Boolean(supplier?.compliance_results.length && supplier.compliance_results.every((result) => result.status === 'pass'))
+  const approvalReady = complianceReady && Boolean(erpValidation?.valid)
 
-  async function handleRequestChanges() {
-    if (!supplier) return
-    const documents = supplier.documents
-      .filter((document) => changeReasons[document.id]?.trim())
-      .map((document) => ({ document_id: document.id, reason: changeReasons[document.id].trim() }))
-    if (documents.length === 0) return
-    setRequestingChanges(true)
-    setError('')
-    try {
-      const result = await api.requestChanges(supplierId, {
-        documents,
-        general_reason: generalChangeReason.trim() || undefined,
-        reviewer_name: 'Demo reviewer',
+  const findings = useMemo(() => {
+    if (!supplier) return []
+    const messages: Array<{ severity: 'error' | 'warning' | 'success' | 'info'; text: string }> = []
+    if (!latestProcessingRun) return [{ severity: 'info' as const, text: 'AI document analysis has not run yet.' }]
+    if (latestProcessingRun.status === 'failed') {
+      const total = Number(latestProcessingRun.details.total_documents ?? supplier.documents.length)
+      const extracted = Number(latestProcessingRun.details.ready_extractions ?? 0)
+      const indexed = Number(latestProcessingRun.details.ready_indexes ?? 0)
+      messages.push({
+        severity: extracted === 0 && indexed === 0 ? 'error' : 'warning',
+        text: extracted === 0 && indexed === 0
+          ? `AI processing did not start successfully: 0/${total} documents were extracted or indexed.`
+          : `${extracted}/${total} documents were extracted and ${indexed}/${total} were indexed. Successful work was retained.`,
       })
-      setChangesOpen(false)
-      setChangeReasons({})
-      setGeneralChangeReason('')
-      setNotice(result.message)
-      await loadSupplier()
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'The change request could not be sent.')
-    } finally {
-      setRequestingChanges(false)
+      const failures = Array.isArray(latestProcessingRun.details.failed_documents)
+        ? latestProcessingRun.details.failed_documents as Array<{ message?: string }> : []
+      const grouped = new Map<string, number>()
+      failures.forEach((failure) => grouped.set(failureReason(failure.message), (grouped.get(failureReason(failure.message)) ?? 0) + 1))
+      grouped.forEach((count, reason) => messages.push({ severity: 'error', text: `${reason} ${count} document${count === 1 ? '' : 's'} affected.` }))
     }
+    const mismatches = Array.isArray(latestProcessingRun.details.classification_mismatches) ? latestProcessingRun.details.classification_mismatches as string[] : []
+    const conflicts = Array.isArray(latestProcessingRun.details.field_conflicts) ? latestProcessingRun.details.field_conflicts as string[] : []
+    if (mismatches.length) messages.push({ severity: 'warning', text: `${mismatches.length} file(s) may not match the selected evidence type.` })
+    if (conflicts.length) messages.push({ severity: 'warning', text: `Conflicting values were detected for: ${conflicts.join(', ')}.` })
+    if (!messages.length) messages.push({ severity: 'success', text: 'Document extraction and search indexing completed. Review each requirement below.' })
+    return messages
+  }, [latestProcessingRun, supplier])
+
+  async function viewOriginal(id: string) {
+    try { await openOriginal(() => api.reviewerOriginal(supplierId, id)) }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Could not open the original document.') }
+  }
+
+  async function downloadFile(document: { id: string; document_type: string; revision: number; filename: string }) {
+    const requirement = supplier?.requirements.documents.find((item) => item.document_type === document.document_type)
+    const filename = evidenceDownloadFilename({ supplierId, documentType: document.document_type, revision: document.revision, originalFilename: document.filename, requirementId: requirement?.requirement_id, label: requirement?.label ?? document.document_type })
+    try { await downloadOriginal(() => api.reviewerOriginal(supplierId, document.id), filename) }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Could not download the original document.') }
+  }
+
+  async function runAction(action: () => Promise<unknown>, success: string): Promise<boolean> {
+    setBusy(true); setError(''); setNotice('')
+    try { await action(); setNotice(success); await loadSupplier(); return true }
+    catch (requestError) { await loadSupplier(); setError(requestError instanceof Error ? requestError.message : 'The review action could not be completed.'); return false }
+    finally { setBusy(false) }
+  }
+
+  async function runProcessing(action: () => Promise<ProcessSupplierResponse>, success: string) {
+    setBusy(true); setError(''); setNotice('')
+    try {
+      const outcome = await action(); await loadSupplier()
+      if (outcome.failed_document_count > 0) {
+        setError(`AI processing finished with ${outcome.failed_document_count} document${outcome.failed_document_count === 1 ? '' : 's'} still requiring a retry. See document processing for details.`)
+        return false
+      }
+      setNotice(success); return true
+    } catch (requestError) { await loadSupplier(); setError(requestError instanceof Error ? requestError.message : 'AI processing could not be completed.'); return false }
+    finally { setBusy(false) }
+  }
+
+  async function runSupplierAnalysis() {
+    const refresh = latestProcessingRun?.status === 'succeeded'
+    await runProcessing(() => api.processSupplier(supplierId, refresh), refresh ? 'AI document analysis refreshed successfully.' : 'AI document analysis completed successfully.')
+  }
+
+  async function retryDocument(document: SupplierDocument) {
+    await runProcessing(() => api.processSupplierDocument(supplierId, document.id), `${document.filename} was extracted and indexed successfully.`)
+  }
+
+  async function retryTextExtraction(document: SupplierDocument) {
+    setBusy(true); setError(''); setNotice('')
+    try {
+      const recovered = await api.retryReviewerTextExtraction(supplierId, document.id)
+      if (recovered.processing_status === 'failed') throw new Error(recovered.error_message || 'OCR could not read this document.')
+      const outcome = await api.processSupplierDocument(supplierId, document.id)
+      await loadSupplier()
+      if (outcome.failed_document_count) throw new Error('OCR succeeded, but AI extraction or indexing still requires a retry.')
+      setNotice(`${document.filename} was recovered with OCR, extracted, and indexed successfully.`)
+    } catch (requestError) {
+      await loadSupplier()
+      setError(requestError instanceof Error ? requestError.message : 'Text extraction could not be retried.')
+    } finally { setBusy(false) }
+  }
+
+  async function confirmRequirement(document: SupplierDocument, requirement: RequirementItem) {
+    await runAction(
+      () => api.reviewEvidence(supplierId, document.id, 'verify'),
+      `${requirement.label} confirmed. Its document, extracted values, and policy checks were updated together.`,
+    )
+  }
+
+  async function submitFlag() {
+    if (!flagDocumentId || flagReason.trim().length < 5) return
+    if (await runAction(() => api.reviewEvidence(supplierId, flagDocumentId, 'dispute', flagReason.trim()), 'The requirement was flagged and will block approval until resolved.')) {
+      setFlagDocumentId(null); setFlagReason('')
+    }
+  }
+
+  function openFieldEditor(field: ExtractedField) { setFieldToEdit(field); setEditedValue(field.value); setEditedPage(field.page_number) }
+  async function saveCorrection() {
+    if (!fieldToEdit || !editedValue.trim()) return
+    if (await runAction(() => api.updateExtractedField(supplierId, fieldToEdit.id, { value: editedValue.trim(), page_number: editedPage }), 'Correction saved and policy checks refreshed.')) setFieldToEdit(null)
+  }
+
+  async function saveDecision() {
+    if (!decisionAction) return
+    const action = decisionAction
+    if (await runAction(() => action === 'approve' ? api.approveSupplier(supplierId) : api.rejectSupplier(supplierId, rejectionReason.trim()), action === 'approve' ? 'Supplier approved and sent to the mock ERP.' : 'Supplier rejected.')) {
+      setDecisionAction(null); setRejectionReason('')
+    }
+  }
+
+  async function refreshErpValidation() {
+    setErpValidating(true); setErpValidationError('')
+    try { setErpValidation(await api.validateErpRecord(supplierId)) }
+    catch (validationError) { setErpValidation(null); setErpValidationError(validationError instanceof Error ? validationError.message : 'ERP validation could not be completed.') }
+    finally { setErpValidating(false) }
+  }
+
+  async function openErpRecord() {
+    setBusy(true); setError('')
+    try { setErpRecord(await api.getErpRecord(supplierId)); setShowErpRecord(true) }
+    catch (recordError) { setError(recordError instanceof Error ? recordError.message : 'ERP record could not be retrieved.') }
+    finally { setBusy(false) }
   }
 
   if (loading) return <Box sx={{ display: 'grid', placeItems: 'center', py: 8 }}><CircularProgress /></Box>
   if (!supplier) return <Alert severity="error">{error || 'Supplier was not found.'}</Alert>
 
+  const filterOptions: Array<{ key: RequirementFilter; label: string; color: 'warning' | 'success' | 'info' | 'error'; description: string }> = [
+    { key: 'attention', label: 'Needs attention', color: 'warning', description: 'A mismatch, human judgement, missing evidence, or processing issue needs action.' },
+    { key: 'matched', label: 'Ready to confirm', color: 'info', description: 'The checks matched; the reviewer still needs to confirm the original evidence.' },
+    { key: 'verified', label: 'Confirmed', color: 'success', description: 'The reviewer confirmed the requirement and its extracted values.' },
+    { key: 'flagged', label: 'Flagged', color: 'error', description: 'The reviewer recorded an issue that blocks approval.' },
+  ]
+  const activeOption = filterOptions.find((option) => option.key === selectedFilter) ?? filterOptions[0]
+  const visibleRequirements = orderedEvidence.filter((item) => item.status === selectedFilter)
+  const proposedErp = Object.entries(supplier.erp_preview.payload).map(([fieldName, value]) => ({ fieldName, label: erpLabels[fieldName] ?? fieldLabel(fieldName), value: value ?? 'Not provided', source: supplier.erp_preview.sources[fieldName] }))
+  const identityErpFields = new Set(['supplier_reference', 'legal_name', 'registered_address', 'country', 'contact_name', 'contact_email', 'category', 'subcategory'])
+  const identityErp = proposedErp.filter((item) => identityErpFields.has(item.fieldName))
+  const paymentErp = proposedErp.filter((item) => !identityErpFields.has(item.fieldName))
+  const reviewSupplier = supplier
+
+  function renderCheck(check: ComplianceResult, document: SupplierDocument | undefined) {
+    const outcome = policyOutcome(check)
+    const citedFields = Array.isArray(check.evidence.evidence_fields) ? check.evidence.evidence_fields.map((item) => normalizedFieldKey(String(item))) : []
+    const savedObserved = Array.isArray(check.evidence.observed_values) ? check.evidence.observed_values as Array<{ field_name?: string; value?: unknown; page_number?: number }> : []
+    const observed = savedObserved.length ? savedObserved : reviewSupplier.extracted_fields
+      .filter((field) => field.document_id === document?.id && citedFields.includes(normalizedFieldKey(field.field_name)))
+      .map((field) => ({ field_name: field.field_name, value: field.value, page_number: field.page_number }))
+    const savedExpected = Array.isArray(check.evidence.expected_values) ? check.evidence.expected_values as Array<{ field_name?: string; value?: unknown }> : []
+    const portalValues: Record<string, unknown> = { supplier_name: reviewSupplier.name, tax_identifier: reviewSupplier.tax_reference, bank_account_number: reviewSupplier.bank_account_number, bank_ifsc: reviewSupplier.bank_ifsc, contact_email: reviewSupplier.contact_email, country: 'India' }
+    const inferredExpected = [...new Set(citedFields)].filter((name) => portalValues[name] != null && portalValues[name] !== '').map((name) => ({ field_name: name, value: portalValues[name] }))
+    const expected = savedExpected.length ? savedExpected : inferredExpected.length ? inferredExpected : [{ field_name: 'policy_rule', value: String(check.evidence.check_text ?? 'Review against the policy check.') }]
+    const expectedByField = new Map(expected
+      .filter((item) => item.field_name && item.field_name !== 'policy_rule')
+      .map((item) => [normalizedFieldKey(String(item.field_name)), item]))
+    const observedByField = new Map(observed
+      .filter((item) => item.field_name)
+      .map((item) => [normalizedFieldKey(String(item.field_name)), item]))
+    const comparisonFields = [...new Set([...observedByField.keys(), ...expectedByField.keys()])]
+      .filter((fieldName) => expectedByField.has(fieldName))
+    const method = String(check.evidence.assessment_method ?? 'ai_semantic')
+    const methodLabel = method === 'deterministic' ? 'Calculated from extracted values' : method === 'human_required' ? 'Human judgement required' : method === 'reviewer' ? 'Confirmed by reviewer' : 'AI-assisted comparison'
+    const checkText = String(check.evidence.check_text ?? check.message)
+    const reason = String(check.evidence.ai_reason ?? check.message)
+    return (
+      <Box key={check.id} sx={{ px: 2, py: 1.75 }}>
+        <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" spacing={1} alignItems={{ sm: 'flex-start' }}>
+          <Box><Typography variant="body2" fontWeight={700}>{checkText}</Typography>{reason !== checkText && method !== 'reviewer' && <Typography variant="body2" color="text.secondary" sx={{ mt: .4 }}>{reason}</Typography>}</Box>
+          <Stack alignItems={{ sm: 'flex-end' }} sx={{ flexShrink: 0 }}>
+            <Typography variant="caption" fontWeight={700} color={outcome === 'matched' ? 'success.dark' : outcome === 'not_matched' ? 'error.dark' : 'warning.dark'}>
+              {outcome === 'matched' ? '✓ Matched' : outcome === 'not_matched' ? 'Not matched' : 'Human review'}
+            </Typography>
+            {method !== 'reviewer' && <Typography variant="caption" color="text.secondary">{methodLabel}</Typography>}
+          </Stack>
+        </Stack>
+        {outcome !== 'matched' && comparisonFields.length > 0 && (
+          <Box sx={{ mt: 1.25, border: 1, borderColor: 'divider', borderRadius: 1.5, overflow: 'hidden' }}>
+            <Box sx={{ display: { xs: 'none', sm: 'grid' }, gridTemplateColumns: 'minmax(130px, .7fr) minmax(0, 1fr) minmax(0, 1fr)', gap: 1.5, px: 1.25, py: .75, bgcolor: 'action.hover' }}>
+              <Typography variant="caption" fontWeight={750}>Field comparison</Typography>
+              <Typography variant="caption" fontWeight={750}>Document value</Typography>
+              <Typography variant="caption" fontWeight={750}>Portal / expected value</Typography>
+            </Box>
+            <Stack divider={<Divider flexItem />}>
+              {comparisonFields.map((fieldName) => {
+                const observedItem = observedByField.get(fieldName)
+                const expectedItem = expectedByField.get(fieldName)
+                const matches = comparisonValueMatches(fieldName, observedItem?.value, expectedItem?.value)
+                return (
+                  <Box
+                    key={fieldName}
+                    sx={{
+                      display: 'grid',
+                      gridTemplateColumns: { xs: '1fr', sm: 'minmax(130px, .7fr) minmax(0, 1fr) minmax(0, 1fr)' },
+                      gap: { xs: .6, sm: 1.5 },
+                      px: 1.25,
+                      py: 1,
+                      bgcolor: matches ? 'background.paper' : 'rgba(211,47,47,.055)',
+                    }}
+                  >
+                    <Stack direction="row" spacing={.75} alignItems="center">
+                      <Typography variant="caption" fontWeight={750}>{fieldLabel(fieldName)}</Typography>
+                      <Typography variant="caption" fontWeight={750} color={matches ? 'success.dark' : 'error.dark'}>{matches ? '✓ Match' : 'Mismatch'}</Typography>
+                    </Stack>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" display={{ xs: 'block', sm: 'none' }}>Document value</Typography>
+                      <ComparedValue value={observedItem?.value} comparison={expectedItem?.value} highlight={!matches} />
+                      {observedItem?.page_number && <Typography component="span" variant="caption" color="text.secondary"> · page {observedItem.page_number}</Typography>}
+                    </Box>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" display={{ xs: 'block', sm: 'none' }}>Portal / expected value</Typography>
+                      <ComparedValue value={expectedItem?.value} comparison={observedItem?.value} highlight={!matches} />
+                    </Box>
+                  </Box>
+                )
+              })}
+            </Stack>
+          </Box>
+        )}
+        {outcome !== 'matched' && comparisonFields.length === 0 && (
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 1, mt: 1.25 }}>
+            <Box sx={{ p: 1.25, borderRadius: 1.5, bgcolor: 'rgba(211,47,47,.06)' }}><Typography variant="caption" fontWeight={750} color="error.dark">Observed</Typography>{observed.length ? observed.map((item, index) => <Typography key={`${item.field_name}-${index}`} variant="caption" display="block" sx={{ mt: .4, overflowWrap: 'anywhere' }}>{fieldLabel(String(item.field_name ?? 'value'))}: {item.value == null || item.value === '' ? 'Not found' : String(item.value)}{item.page_number ? ` · page ${item.page_number}` : ''}</Typography>) : <Typography variant="caption" display="block" sx={{ mt: .4 }}>No reliable value was extracted.</Typography>}</Box>
+            <Box sx={{ p: 1.25, borderRadius: 1.5, bgcolor: 'action.hover' }}><Typography variant="caption" fontWeight={750}>Expected</Typography>{expected.map((item, index) => <Typography key={`${item.field_name}-${index}`} variant="caption" display="block" sx={{ mt: .4, overflowWrap: 'anywhere' }}>{item.field_name === 'policy_rule' ? '' : `${fieldLabel(String(item.field_name ?? 'value'))}: `}{String(item.value ?? 'Not specified')}</Typography>)}</Box>
+          </Box>
+        )}
+      </Box>
+    )
+  }
+
+  function renderErpGroup(title: string, items: typeof proposedErp) {
+    return (
+      <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
+        <Typography fontWeight={750} sx={{ px: 2, py: 1.5, bgcolor: 'action.hover' }}>{title}</Typography>
+        <Stack divider={<Divider flexItem />}>
+          {items.map((item) => {
+            const sourceColor = item.source?.source === 'reviewed_evidence' ? 'success.dark'
+              : item.source?.source === 'supplier_entered' ? 'info.dark'
+                : item.source?.source === 'not_available' ? 'warning.dark' : 'text.secondary'
+            return (
+              <Stack key={item.fieldName} direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" spacing={1.5} sx={{ px: 2, py: 1.25 }}>
+                <Typography variant="body2" color="text.secondary">{item.label}</Typography>
+                <Box sx={{ minWidth: 0, textAlign: { sm: 'right' } }}>
+                  <Typography variant="body2" fontWeight={650} sx={{ overflowWrap: 'anywhere' }}>{String(item.value)}</Typography>
+                  <Typography variant="caption" color={sourceColor}>{item.source?.label ?? 'Unknown source'}</Typography>
+                </Box>
+              </Stack>
+            )
+          })}
+        </Stack>
+      </Box>
+    )
+  }
+
   return (
     <Stack spacing={3}>
-      <Button component={Link} to="/reviewer" startIcon={<ArrowBackRoundedIcon />} sx={{ alignSelf: 'flex-start' }}>Back to review queue</Button>
+      <Button component={Link} to="/review" startIcon={<ArrowBackRoundedIcon />} sx={{ alignSelf: 'flex-start' }}>Back to reviewer workspace</Button>
       <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" spacing={2}>
-        <Box>
-          <Typography variant="h4">{supplier.name}</Typography>
-          <Typography color="text.secondary">{supplier.country || 'Country not provided'} / {supplier.contact_email || 'No contact email'}</Typography>
-        </Box>
+        <Box><Typography variant="h4">{supplier.name}</Typography><Chip label={`Supplier reference: ${supplierReference(supplier.id)}`} size="small" variant="outlined" sx={{ my: .75 }} /><Typography color="text.secondary">{supplier.category} / {supplier.subcategory} · {supplier.contact_email || 'No contact email'}</Typography></Box>
         <StatusChip status={supplier.status} />
       </Stack>
       {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
       {notice && <Alert severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
-      {(supplier.status === 'submitted' || supplier.status === 'resubmitted') && (
-        <Alert
-          severity="info"
-          action={<Button color="inherit" onClick={() => void handleStartReview()} disabled={startingReview}>{startingReview ? 'Opening...' : 'Open review'}</Button>}
-        >
-          Review round {supplier.review_round} is waiting to be opened. Reviewer actions remain locked until then.
-        </Alert>
-      )}
-      {supplier.status === 'changes_requested' && (
-        <Alert severity="warning">Waiting for the supplier to replace the flagged documents and resubmit.</Alert>
-      )}
-      {finalized && (
-        <Alert severity={supplier.status === 'approved' ? 'success' : 'error'}>
-          {supplier.status === 'approved'
-            ? `Approved and created in the mock ERP as ${supplier.erp_supplier_id}.`
-            : `Rejected: ${supplier.decision_reason}`}
-          {supplier.decided_at && ` Decision recorded ${new Date(supplier.decided_at).toLocaleString()}.`}
-        </Alert>
-      )}
+      {finalized && <Alert severity={supplier.status === 'approved' ? 'success' : 'error'} action={supplier.status === 'approved' ? <Button color="inherit" size="small" onClick={() => void openErpRecord()}>View ERP record</Button> : undefined}>{supplier.status === 'approved' ? `Approved and created in the mock ERP as ${supplier.erp_supplier_id}.` : `Rejected: ${supplier.decision_reason}`}{supplier.decided_at && ` Decision recorded ${new Date(supplier.decided_at).toLocaleString()}.`}</Alert>}
 
-      <Box>
-        <Card><CardContent sx={{ p: { xs: 3, md: 4 } }}>
-          <Typography variant="h6">Submitted documents</Typography>
-          <Typography color="text.secondary" variant="body2" sx={{ mb: 3 }}>Documents are read-only in the reviewer workspace.</Typography>
-          {supplier.documents.length === 0 ? (
-            <Alert severity="info">No documents uploaded yet.</Alert>
-          ) : (
-            <Stack divider={<Divider flexItem />} spacing={0}>
-              {supplier.documents.map((document) => (
-                <Stack key={document.id} direction="row" justifyContent="space-between" alignItems="center" spacing={2} sx={{ py: 2 }}>
-                  <Stack direction="row" spacing={1.5} alignItems="center" sx={{ minWidth: 0 }}>
-                    <DescriptionRoundedIcon color="primary" />
-                    <Box sx={{ minWidth: 0 }}>
-                      <Typography noWrap fontWeight={650}>{document.filename}</Typography>
-                      <Typography variant="caption" color="text.secondary">{documentLabels[document.document_type]} / {document.page_count} page(s)</Typography>
-                      {document.error_message && <Typography variant="caption" color="error" display="block">{document.error_message}</Typography>}
-                    </Box>
-                  </Stack>
-                  <StatusChip status={document.processing_status} />
-                </Stack>
-              ))}
+      <Card>
+        <CardContent sx={{ p: { xs: 2.5, md: 3 } }}>
+          <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2.5} alignItems={{ lg: 'center' }}>
+            <Box sx={{ minWidth: { lg: 230 } }}>
+              <Stack direction="row" spacing={1} alignItems="center"><AutoAwesomeRoundedIcon color="primary" /><Typography variant="h6">Document processing</Typography></Stack>
+              <Typography color="text.secondary" variant="body2" sx={{ mt: .5 }}>Extraction, indexing, and technical readiness.</Typography>
+            </Box>
+            <Stack spacing={.75} sx={{ flex: 1 }}>
+              {findings.map((finding, index) => <Alert key={`${finding.text}-${index}`} severity={finding.severity} sx={{ flex: 1, py: .25, overflowWrap: 'anywhere' }}>{finding.text}</Alert>)}
             </Stack>
-          )}
-        </CardContent></Card>
+            <Box sx={{ minWidth: { lg: 245 }, textAlign: { lg: 'right' } }}>
+              {latestProcessingRun && <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>Last run {new Date(latestProcessingRun.created_at).toLocaleString()} · {(latestProcessingRun.latency_ms / 1000).toFixed(1)}s</Typography>}
+              {!finalized && <Button variant="outlined" startIcon={busy ? <CircularProgress size={17} /> : <AutoAwesomeRoundedIcon />} disabled={busy} onClick={() => void runSupplierAnalysis()}>{busy ? 'Analyzing documents...' : !latestProcessingRun ? 'Run AI analysis' : latestProcessingRun.status === 'failed' ? 'Retry analysis' : 'Refresh AI analysis'}</Button>}
+            </Box>
+          </Stack>
+        </CardContent>
+      </Card>
 
-      </Box>
-
-      <Card><CardContent sx={{ p: { xs: 3, md: 4 } }}>
-        <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ md: 'center' }} spacing={2}>
-          <Box>
-            <Stack direction="row" spacing={1} alignItems="center">
-              <AutoAwesomeRoundedIcon color="primary" />
-              <Typography variant="h6">AI document processing</Typography>
-            </Stack>
-            <Typography color="text.secondary" variant="body2" sx={{ mt: 0.75 }}>
-              Redact sensitive data, extract review fields, and build the supplier-scoped search index.
-            </Typography>
-            {latestProcessingRun && (
-              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
-                Last run: {latestProcessingRun.model} / {latestProcessingRun.input_tokens + latestProcessingRun.output_tokens} tokens / {(latestProcessingRun.latency_ms / 1000).toFixed(1)}s / {latestProcessingRun.status}
-              </Typography>
-            )}
+      <Card>
+        <CardContent sx={{ p: { xs: 2.5, md: 4 } }}>
+          <Stack direction="row" spacing={1} alignItems="center"><FactCheckRoundedIcon color="primary" /><Typography variant="h6">Requirement review</Typography></Stack>
+          <Typography color="text.secondary" variant="body2" sx={{ mt: .5 }}>Review the document, policy findings, and extracted values together. Confirm or flag the requirement without leaving its card.</Typography>
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' }, gap: 1, my: 2.5 }}>
+            {filterOptions.map((option) => {
+              const count = orderedEvidence.filter((item) => item.status === option.key).length
+              return <ButtonBase key={option.key} aria-pressed={selectedFilter === option.key} onClick={() => setSelectedFilter(option.key)} sx={{ p: 1.4, border: 1, borderColor: `${option.color}.main`, borderRadius: 2, bgcolor: selectedFilter === option.key ? 'action.selected' : 'background.paper', display: 'block', textAlign: 'left', boxShadow: selectedFilter === option.key ? 2 : 0 }}><Typography variant="h5" color={`${option.color}.dark`} fontWeight={750}>{count}</Typography><Typography variant="body2" fontWeight={700}>{option.label}</Typography></ButtonBase>
+            })}
           </Box>
-          <Button
-            variant="contained"
-            startIcon={processing ? <CircularProgress size={18} color="inherit" /> : <AutoAwesomeRoundedIcon />}
-            disabled={!allDocumentsReady || processing || !reviewActive}
-            onClick={handleProcess}
-          >
-            {processing ? 'Processing documents...' : supplier.extracted_fields.length ? 'Reprocess documents' : 'Process documents'}
-          </Button>
-        </Stack>
-        {!allDocumentsReady && <Alert severity="info" sx={{ mt: 2 }}>Upload one ready document in each of the three categories to enable processing.</Alert>}
-      </CardContent></Card>
-
-      <Card><CardContent sx={{ p: { xs: 3, md: 4 } }}>
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.75 }}>
-          <QuestionAnswerRoundedIcon color="primary" />
-          <Typography variant="h6">Ask about this supplier</Typography>
-        </Stack>
-        <Typography color="text.secondary" variant="body2" sx={{ mb: 2.5 }}>
-          Answers are limited to this supplier's indexed documents and include source citations.
-        </Typography>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'flex-start' }}>
-          <TextField
-            fullWidth
-            multiline
-            minRows={2}
-            label="Question"
-            placeholder="When does the supplier's insurance expire?"
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-            disabled={asking || supplier.extracted_fields.length === 0}
-          />
-          <Button
-            variant="contained"
-            startIcon={asking ? <CircularProgress size={18} color="inherit" /> : <QuestionAnswerRoundedIcon />}
-            disabled={asking || question.trim().length < 3 || supplier.extracted_fields.length === 0}
-            onClick={handleAskQuestion}
-            sx={{ minWidth: 150, minHeight: 56 }}
-          >
-            {asking ? 'Asking...' : 'Ask question'}
-          </Button>
-        </Stack>
-        {questionResponse && (
-          <Alert severity={questionResponse.information_found ? 'success' : 'info'} sx={{ mt: 2.5 }}>
-            <Typography fontWeight={650}>{questionResponse.answer}</Typography>
-            {questionResponse.citations.length > 0 && (
-              <Stack spacing={1} sx={{ mt: 1.5 }}>
-                {questionResponse.citations.map((citation) => (
-                  <Box key={citation.chunk_id}>
-                    <Typography variant="caption" fontWeight={700}>{citation.filename} / page {citation.page_number}</Typography>
-                    <Typography variant="body2">{citation.excerpt}</Typography>
-                  </Box>
-                ))}
-              </Stack>
-            )}
-            <Typography variant="caption" display="block" sx={{ mt: 1.5 }}>
-              {questionResponse.run.model} / {questionResponse.run.retrieval_count} retrieved chunks / {(questionResponse.run.latency_ms / 1000).toFixed(1)}s
-            </Typography>
-          </Alert>
-        )}
-      </CardContent></Card>
-
-      <Card><CardContent sx={{ p: { xs: 3, md: 4 } }}>
-        <Typography variant="h6">Extracted review fields</Typography>
-        <Typography color="text.secondary" variant="body2" sx={{ mb: 2.5 }}>Values include their source page and model confidence for human review.</Typography>
-        {supplier.extracted_fields.length === 0 ? (
-          <Alert severity="info">No fields have been extracted. Process the three documents first.</Alert>
-        ) : (
-          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
-            {supplier.extracted_fields.map((field) => {
-              const sourceDocument = supplier.documents.find((document) => document.id === field.document_id)
+          <Typography fontWeight={750}>{activeOption.label}</Typography><Typography variant="caption" color="text.secondary">{activeOption.description}</Typography>
+          <Stack spacing={2} sx={{ mt: 2 }}>
+            {visibleRequirements.length === 0 ? <Alert severity="info">No requirements in this group.</Alert> : visibleRequirements.map(({ requirement, document, checks, fields, status }) => {
+              const extractedExpanded = expandedRequirements.has(requirement.requirement_id)
+              const checksExpanded = checkVisibility[requirement.requirement_id] ?? status !== 'verified'
+              const hasMismatch = checks.some((check) => policyOutcome(check) === 'not_matched')
+              const analysisReady = document?.ai_extraction_status === 'ready'
+              const canConfirm = Boolean(document && analysisReady && !hasMismatch && !finalized)
+              const blockedReason = !document ? 'The required document is missing.' : !analysisReady ? 'Run or retry document analysis first.' : hasMismatch ? 'Correct the extracted value or flag the requirement before confirming.' : ''
+              const statusLabel = filterOptions.find((option) => option.key === status)?.label
               return (
-                <Box key={field.id} sx={{ p: 2, border: 1, borderColor: 'divider', borderRadius: 2 }}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
-                    <Typography variant="caption" color="text.secondary" fontWeight={700}>{fieldLabels[field.field_name] ?? field.field_name}</Typography>
-                    <Stack direction="row" spacing={0.5} alignItems="center">
-                      <Chip
-                        size="small"
-                        color={field.needs_review ? 'warning' : 'success'}
-                        variant="outlined"
-                        label={field.needs_review ? 'Review' : `${Math.round(field.confidence * 100)}%`}
-                      />
-                      <Tooltip title="Correct field">
-                        <IconButton size="small" disabled={!reviewActive} onClick={() => openFieldEditor(field)}>
-                          <EditRoundedIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
+                <Box key={requirement.requirement_id} sx={{ border: 1, borderColor: status === 'flagged' ? 'error.main' : status === 'attention' ? 'warning.main' : 'divider', borderRadius: 2.5, overflow: 'hidden' }}>
+                  <Box sx={{ p: 2, bgcolor: 'action.hover' }}>
+                    <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={1.5}>
+                      <Box sx={{ minWidth: 0 }}>
+                        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap><Typography fontWeight={750}>{requirement.label}</Typography><Typography variant="caption" color="text.secondary">{requirement.requirement_id}</Typography><Chip size="small" color={status === 'verified' ? 'success' : status === 'flagged' ? 'error' : status === 'attention' ? 'warning' : 'info'} label={statusLabel} /></Stack>
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: .5 }}>{requirement.accepted_evidence}</Typography>
+                        {document && <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: .5, overflowWrap: 'anywhere' }}>{document.filename} · {document.page_count} page(s) · version {document.revision}</Typography>}
+                        {document?.ocr_pages.length ? <Typography variant="caption" color="info.dark" display="block">OCR-derived page{document.ocr_pages.length === 1 ? '' : 's'}: {document.ocr_pages.join(', ')}{document.ocr_language ? ` · ${document.ocr_language}` : ''}</Typography> : null}
+                        {document?.ocr_warnings.map((warning) => <Typography key={warning} variant="caption" color="warning.dark" display="block">OCR warning: {warning}</Typography>)}
+                        {document?.review_status === 'disputed' && document.review_comment && <Typography variant="caption" color="error" display="block">Flag reason: {document.review_comment}</Typography>}
+                      </Box>
+                      <Stack alignItems={{ md: 'flex-end' }} spacing={.5} sx={{ flexShrink: 0 }}>
+                        <Button size="small" color="inherit" endIcon={checksExpanded ? <ExpandLessRoundedIcon /> : <ExpandMoreRoundedIcon />} onClick={() => setCheckVisibility((current) => ({ ...current, [requirement.requirement_id]: !checksExpanded }))}>{checksExpanded ? 'Hide checks' : `Show checks (${checks.length})`}</Button>
+                        {document && <Typography variant="caption" color={document.ai_extraction_status === 'failed' || document.processing_status === 'failed' ? 'error' : 'text.secondary'}>Document {displayStatus(document.processing_status)} · extraction {displayStatus(document.ai_extraction_status)}</Typography>}
+                        {document ? <Stack direction="row" spacing={.5}><Button size="small" startIcon={<DescriptionRoundedIcon />} onClick={() => void viewOriginal(document.id)}>View original</Button><Button size="small" onClick={() => void downloadFile(document)}>Download</Button>{!finalized && document.processing_status === 'failed' && <Button size="small" disabled={busy} onClick={() => void retryTextExtraction(document)}>Retry OCR</Button>}{!finalized && document.processing_status === 'ready' && (document.ai_extraction_status === 'failed' || document.ai_index_status === 'failed') && <Button size="small" disabled={busy} onClick={() => void retryDocument(document)}>Retry AI</Button>}</Stack> : <Typography variant="caption" color="error">Required document missing</Typography>}
+                      </Stack>
                     </Stack>
-                  </Stack>
-                  <Typography fontWeight={650} sx={{ my: 1, overflowWrap: 'anywhere' }}>{field.value}</Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {sourceDocument?.filename ?? 'Source document'} / page {field.page_number} / {Math.round(field.confidence * 100)}% confidence
-                  </Typography>
-                  {field.needs_review && (
-                    <Alert severity="warning" sx={{ mt: 1.5, py: 0.25 }}>
-                      <Typography variant="body2">{fieldReviewMessage(field, sourceDocument)}</Typography>
-                    </Alert>
-                  )}
+                  </Box>
+                  {checksExpanded && (checks.length ? <Stack divider={<Divider flexItem />}>{checks.map((check) => renderCheck(check, document))}</Stack> : <Alert severity="warning" sx={{ m: 2 }}>Policy analysis is not available for this requirement yet.</Alert>)}
+                  <Divider />
+                  <Box sx={{ px: 2, py: 1.25 }}>
+                    <Button size="small" endIcon={extractedExpanded ? <ExpandLessRoundedIcon /> : <ExpandMoreRoundedIcon />} onClick={() => setExpandedRequirements((current) => { const next = new Set(current); if (next.has(requirement.requirement_id)) next.delete(requirement.requirement_id); else next.add(requirement.requirement_id); return next })}>Extracted values ({fields.length})</Button>
+                    {extractedExpanded && <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 1, mt: 1.25 }}>{fields.length ? fields.map((field) => <Box key={field.id} sx={{ p: 1.25, border: 1, borderColor: field.review_status === 'disputed' ? 'error.main' : 'divider', borderRadius: 1.5 }}><Stack direction="row" justifyContent="space-between" spacing={1}><Typography variant="caption" color="text.secondary" fontWeight={700}>{fieldLabel(field.field_name)}</Typography><Stack direction="row" spacing={.25} alignItems="center"><Typography variant="caption" color={field.review_status === 'disputed' ? 'error' : 'text.secondary'}>{displayStatus(field.review_status)}</Typography>{!finalized && <Tooltip title="Correct value"><IconButton size="small" onClick={() => openFieldEditor(field)}><EditRoundedIcon fontSize="small" /></IconButton></Tooltip>}</Stack></Stack><Typography variant="body2" fontWeight={650} sx={{ mt: .75, overflowWrap: 'anywhere' }}>{field.value}</Typography><Typography variant="caption" color={document?.ocr_pages.includes(field.page_number) ? 'info.dark' : 'text.secondary'}>page {field.page_number}{document?.ocr_pages.includes(field.page_number) ? ' · OCR-derived' : ''} · {Math.round(field.confidence * 100)}% AI confidence</Typography></Box>) : <Alert severity="info">No values were extracted from this document.</Alert>}</Box>}
+                  </Box>
+                  {!finalized && document && status !== 'verified' && <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="flex-end" spacing={1} sx={{ px: 2, pb: 2 }}><Button color="error" variant="outlined" startIcon={<FlagRoundedIcon />} disabled={busy} onClick={() => setFlagDocumentId(document.id)}>Flag with reason</Button><Tooltip title={canConfirm ? 'Confirm the document, extracted values, and policy checks together.' : blockedReason}><span><Button color="success" variant="contained" startIcon={<CheckCircleRoundedIcon />} disabled={!canConfirm || busy} onClick={() => void confirmRequirement(document, requirement)}>Confirm requirement</Button></span></Tooltip></Stack>}
+                  {status === 'verified' && document?.reviewed_at && <Typography variant="caption" color="text.secondary" display="block" textAlign="right" sx={{ px: 2, pb: 1.5 }}>Confirmed {new Date(document.reviewed_at).toLocaleString()}{document.reviewed_by ? ` by ${document.reviewed_by}` : ''}</Typography>}
                 </Box>
               )
             })}
-          </Box>
-        )}
-      </CardContent></Card>
-
-      <Card><CardContent sx={{ p: { xs: 3, md: 4 } }}>
-        <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ md: 'center' }} spacing={2}>
-          <Box>
-            <Stack direction="row" spacing={1} alignItems="center">
-              <FactCheckRoundedIcon color="primary" />
-              <Typography variant="h6">Compliance and human decision</Typography>
-            </Stack>
-            <Typography color="text.secondary" variant="body2" sx={{ mt: 0.75 }}>
-              Deterministic checks control approval. AI fields remain editable until a final decision.
-            </Typography>
-          </Box>
-          <Button
-            variant="outlined"
-            startIcon={checkingCompliance ? <CircularProgress size={18} /> : <FactCheckRoundedIcon />}
-            disabled={checkingCompliance || supplier.extracted_fields.length === 0 || !reviewActive}
-            onClick={handleRunCompliance}
-          >
-            {checkingCompliance ? 'Checking...' : supplier.compliance_results.length ? 'Rerun checks' : 'Run checks'}
-          </Button>
-        </Stack>
-
-        {supplier.compliance_results.length === 0 ? (
-          <Alert severity="info" sx={{ mt: 2.5 }}>Run compliance checks after processing and reviewing extracted fields.</Alert>
-        ) : (
-          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 1.5, mt: 2.5 }}>
-            {supplier.compliance_results.map((result) => (
-              <Box key={result.id} sx={{ p: 2, border: 1, borderColor: 'divider', borderRadius: 2 }}>
-                <Stack direction="row" justifyContent="space-between" spacing={1}>
-                  <Typography fontWeight={700}>{ruleLabels[result.rule_code] ?? result.rule_code}</Typography>
-                  <Chip
-                    size="small"
-                    color={result.status === 'pass' ? 'success' : result.status === 'fail' ? 'error' : 'warning'}
-                    label={result.status.replaceAll('_', ' ')}
-                  />
-                </Stack>
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{result.message}</Typography>
-              </Box>
-            ))}
-          </Box>
-        )}
-
-        <Divider sx={{ my: 3 }} />
-        <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} spacing={2}>
-          <Alert severity={approvalReady ? 'success' : 'warning'} sx={{ flex: 1 }}>
-            {approvalReady ? 'Every mandatory check passed. Human approval is enabled.' : 'Approval remains blocked until every check passes.'}
-          </Alert>
-          <Stack direction="row" spacing={1}>
-            <Button
-              color="warning"
-              variant="outlined"
-              startIcon={<ReplayRoundedIcon />}
-              disabled={!reviewActive}
-              onClick={() => setChangesOpen(true)}
-            >
-              Request changes
-            </Button>
-            <Button
-              color="error"
-              variant="outlined"
-              startIcon={<BlockRoundedIcon />}
-              disabled={!reviewActive}
-              onClick={() => setDecisionAction('reject')}
-            >
-              Final reject
-            </Button>
-            <Button
-              color="success"
-              variant="contained"
-              startIcon={<HowToRegRoundedIcon />}
-              disabled={!approvalReady || !reviewActive}
-              onClick={() => setDecisionAction('approve')}
-            >
-              Approve and send to ERP
-            </Button>
           </Stack>
-        </Stack>
-      </CardContent></Card>
+          {history.length > 0 && <Box sx={{ mt: 3, pt: 2, borderTop: 1, borderColor: 'divider' }}><Typography fontWeight={700}>Previous document versions</Typography><Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>Retained originals remain available for audit.</Typography>{history.map((item) => <Stack key={item.id} direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} spacing={1} sx={{ py: .75 }}><Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>{item.filename} · version {item.revision}</Typography><Stack direction="row"><Button size="small" onClick={() => void viewOriginal(item.id)}>View</Button><Button size="small" onClick={() => void downloadFile(item)}>Download</Button></Stack></Stack>)}</Box>}
+        </CardContent>
+      </Card>
 
-      <Dialog open={fieldToEdit !== null} onClose={() => !savingField && setFieldToEdit(null)} fullWidth maxWidth="sm">
-        <DialogTitle>Correct extracted field</DialogTitle>
-        <DialogContent>
-          <Stack spacing={2} sx={{ pt: 1 }}>
-            <TextField
-              label={fieldToEdit ? fieldLabels[fieldToEdit.field_name] ?? fieldToEdit.field_name : 'Value'}
-              value={editedValue}
-              onChange={(event) => setEditedValue(event.target.value)}
-              multiline
-              minRows={2}
-              autoFocus
-            />
-            <TextField
-              label="Source page"
-              type="number"
-              value={editedPage}
-              onChange={(event) => setEditedPage(Math.max(1, Number(event.target.value)))}
-              slotProps={{ htmlInput: { min: 1 } }}
-            />
-            <Alert severity="info">Saving sets reviewer confidence to 100% and invalidates previous compliance results.</Alert>
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setFieldToEdit(null)} disabled={savingField}>Cancel</Button>
-          <Button variant="contained" onClick={handleSaveField} disabled={savingField || !editedValue.trim()}>
-            {savingField ? 'Saving...' : 'Save correction'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <Card><CardContent sx={{ p: { xs: 3, md: 4 } }}><Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={2}><Box><Typography variant="h6">Proposed ERP supplier record</Typography><Typography color="text.secondary" variant="body2">This is the exact payload approval will send. Only reviewed or corrected evidence overrides supplier-entered data.</Typography></Box><Button variant="outlined" size="small" disabled={erpValidating || finalized} onClick={() => void refreshErpValidation()}>{erpValidating ? 'Validating...' : 'Validate with ERP'}</Button></Stack>{erpValidationError && <Alert severity="error" sx={{ my: 2 }}>{erpValidationError} No supplier record was created; retry is safe.</Alert>}{erpValidation?.valid && <Alert severity="success" sx={{ my: 2 }}>ERP validation passed.{erpValidation.warnings.length ? ` ${erpValidation.warnings.length} optional field warning${erpValidation.warnings.length === 1 ? '' : 's'} will not block creation.` : ''}</Alert>}{erpValidation && !erpValidation.valid && <Alert severity="error" sx={{ my: 2 }}><Typography fontWeight={700}>ERP validation must be resolved before approval.</Typography>{erpValidation.errors.map((item) => <Typography key={`${item.field}-${item.code}`} variant="body2">• {item.message}</Typography>)}</Alert>}<Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>{renderErpGroup('Identity and classification', identityErp)}{renderErpGroup('Payment, banking and risk', paymentErp)}</Box>{erpValidation?.warnings.length ? <Box sx={{ mt: 1.5 }}>{erpValidation.warnings.map((item) => <Typography key={`${item.field}-${item.code}`} variant="caption" color="text.secondary" display="block">Optional: {item.message}</Typography>)}</Box> : null}{supplier.erp_payload && <Alert severity="success" sx={{ mt: 2 }} action={<Button color="inherit" size="small" onClick={() => void openErpRecord()}>Retrieve from ERP</Button>}>The exact ERP payload was retained with this approval for audit.</Alert>}</CardContent></Card>
 
-      <Dialog open={decisionAction !== null} onClose={() => !deciding && setDecisionAction(null)} fullWidth maxWidth="sm">
-        <DialogTitle>{decisionAction === 'approve' ? 'Approve supplier?' : 'Finally reject supplier?'}</DialogTitle>
-        <DialogContent>
-          {decisionAction === 'approve' ? (
-            <DialogContentText>
-              This confirms human review, finalizes the supplier, and creates its record in the mock ERP. The documents and extracted fields will be locked.
-            </DialogContentText>
-          ) : (
-            <Stack spacing={2} sx={{ pt: 1 }}>
-              <DialogContentText>This is a terminal decision. Use “Request changes” when the supplier should be allowed to replace documents and resubmit.</DialogContentText>
-              <TextField
-                label="Rejection reason"
-                value={rejectionReason}
-                onChange={(event) => setRejectionReason(event.target.value)}
-                multiline
-                minRows={3}
-                autoFocus
-              />
-            </Stack>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDecisionAction(null)} disabled={deciding}>Cancel</Button>
-          <Button
-            color={decisionAction === 'approve' ? 'success' : 'error'}
-            variant="contained"
-            onClick={handleDecision}
-            disabled={deciding || (decisionAction === 'reject' && rejectionReason.trim().length < 10)}
-          >
-            {deciding ? 'Saving decision...' : decisionAction === 'approve' ? 'Confirm approval' : 'Confirm rejection'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <Card><CardContent sx={{ p: { xs: 3, md: 4 } }}><Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ md: 'center' }} spacing={2}><Alert severity={approvalReady ? 'success' : 'warning'} sx={{ flex: 1 }}>{approvalReady ? 'Every requirement is confirmed, policy checks pass, and ERP validation is complete.' : !complianceReady ? 'Approval stays blocked until every requirement is confirmed and all policy checks pass.' : erpValidationError ? 'Policy review is complete, but the ERP is unavailable. Retry validation safely.' : 'Policy review is complete. Resolve the ERP validation results before approval.'}</Alert><Stack direction="row" spacing={1}><Button color="error" variant="outlined" startIcon={<BlockRoundedIcon />} disabled={finalized || busy} onClick={() => setDecisionAction('reject')}>Reject</Button><Button color="success" variant="contained" startIcon={<HowToRegRoundedIcon />} disabled={!approvalReady || finalized || busy} onClick={() => setDecisionAction('approve')}>Approve and create ERP record</Button></Stack></Stack></CardContent></Card>
 
-      <Dialog
-        open={erpTransfer !== null}
-        onClose={() => {
-          if (erpTransfer?.phase === 'complete') setErpTransfer(null)
-        }}
-        disableEscapeKeyDown={erpTransfer?.phase === 'uploading'}
-        fullWidth
-        maxWidth="sm"
-      >
-        <DialogContent sx={{ px: { xs: 3, sm: 5 }, py: 5 }}>
-          {erpTransfer?.phase === 'uploading' ? (
-            <Stack spacing={3} alignItems="center" textAlign="center">
-              <Box
-                sx={{
-                  display: 'grid',
-                  placeItems: 'center',
-                  width: 72,
-                  height: 72,
-                  borderRadius: '50%',
-                  bgcolor: '#EFF6FF',
-                  color: 'primary.main',
-                }}
-              >
-                <CloudUploadRoundedIcon sx={{ fontSize: 38 }} />
-              </Box>
-              <Box>
-                <Typography variant="h5">Uploading to mock ERP</Typography>
-                <Typography color="text.secondary" sx={{ mt: 1 }}>
-                  Keep this window open while VendorLens creates the supplier record.
-                </Typography>
-              </Box>
-              <Box sx={{ width: '100%' }}>
-                <LinearProgress
-                  variant="determinate"
-                  value={erpProgress}
-                  sx={{ height: 9, borderRadius: 999 }}
-                />
-                <Stack direction="row" justifyContent="space-between" sx={{ mt: 1 }}>
-                  <Typography variant="body2" color="text.secondary">{erpTransferStep}</Typography>
-                  <Typography variant="body2" fontWeight={700}>{Math.round(erpProgress)}%</Typography>
-                </Stack>
-              </Box>
-            </Stack>
-          ) : (
-            <Stack spacing={3} alignItems="center" textAlign="center">
-              <CheckCircleRoundedIcon color="success" sx={{ fontSize: 72 }} />
-              <Box>
-                <Typography variant="h5">Supplier uploaded to ERP</Typography>
-                <Typography color="text.secondary" sx={{ mt: 1 }}>
-                  The approved supplier record is now linked to VendorLens.
-                </Typography>
-              </Box>
-              <Box sx={{ width: '100%', p: 2, borderRadius: 2, bgcolor: 'background.default' }}>
-                <Typography variant="caption" color="text.secondary">ERP supplier ID</Typography>
-                <Typography variant="h6">{erpTransfer?.erpSupplierId}</Typography>
-              </Box>
-            </Stack>
-          )}
-        </DialogContent>
-        {erpTransfer?.phase === 'complete' && (
-          <DialogActions sx={{ px: { xs: 3, sm: 5 }, pb: 4 }}>
-            <Button onClick={() => setErpTransfer(null)}>Close</Button>
-            <Button
-              component={Link}
-              to={`/reviewer/${supplierId}/erp`}
-              target="_blank"
-              rel="noopener noreferrer"
-              variant="contained"
-              endIcon={<OpenInNewRoundedIcon />}
-            >
-              Open ERP record
-            </Button>
-          </DialogActions>
-        )}
-      </Dialog>
-
-      <Dialog open={changesOpen} onClose={() => !requestingChanges && setChangesOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>Request document changes</DialogTitle>
-        <DialogContent>
-          <DialogContentText sx={{ mb: 2 }}>
-            Add feedback to every document the supplier must replace. The case will return to the supplier portal.
-          </DialogContentText>
-          <Stack spacing={2}>
-            {supplier.documents.map((document) => (
-              <TextField
-                key={document.id}
-                label={`${documentLabels[document.document_type]} feedback (optional)`}
-                value={changeReasons[document.id] ?? ''}
-                onChange={(event) => setChangeReasons((current) => ({ ...current, [document.id]: event.target.value }))}
-                placeholder={`Explain what must be corrected in ${document.filename}`}
-                multiline
-                minRows={2}
-              />
-            ))}
-            <TextField
-              label="General message (optional)"
-              value={generalChangeReason}
-              onChange={(event) => setGeneralChangeReason(event.target.value)}
-              multiline
-              minRows={2}
-            />
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setChangesOpen(false)} disabled={requestingChanges}>Cancel</Button>
-          <Button
-            color="warning"
-            variant="contained"
-            onClick={() => void handleRequestChanges()}
-            disabled={requestingChanges || !Object.values(changeReasons).some((reason) => reason.trim().length >= 5)}
-          >
-            {requestingChanges ? 'Sending...' : 'Send change request'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <Dialog open={fieldToEdit !== null} onClose={() => !busy && setFieldToEdit(null)} fullWidth maxWidth="sm"><DialogTitle>Correct extracted value</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}><TextField label={fieldToEdit ? fieldLabel(fieldToEdit.field_name) : 'Value'} value={editedValue} onChange={(event) => setEditedValue(event.target.value)} multiline minRows={2} autoFocus /><TextField label="Source page" type="number" value={editedPage} onChange={(event) => setEditedPage(Math.max(1, Number(event.target.value)))} slotProps={{ htmlInput: { min: 1 } }} /><Alert severity="info">The correction is recorded as a human-reviewed value and the policy checks refresh automatically.</Alert></Stack></DialogContent><DialogActions><Button onClick={() => setFieldToEdit(null)} disabled={busy}>Cancel</Button><Button variant="contained" onClick={() => void saveCorrection()} disabled={busy || !editedValue.trim()}>{busy ? 'Saving...' : 'Save correction'}</Button></DialogActions></Dialog>
+      <Dialog open={flagDocumentId !== null} onClose={() => !busy && setFlagDocumentId(null)} fullWidth maxWidth="sm"><DialogTitle>Flag requirement for follow-up</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}><DialogContentText>Explain what does not match the original evidence or policy. The reason is auditable and blocks approval.</DialogContentText><TextField label="Reason" value={flagReason} onChange={(event) => setFlagReason(event.target.value)} multiline minRows={3} autoFocus /></Stack></DialogContent><DialogActions><Button onClick={() => setFlagDocumentId(null)} disabled={busy}>Cancel</Button><Button color="error" variant="contained" onClick={() => void submitFlag()} disabled={busy || flagReason.trim().length < 5}>{busy ? 'Saving...' : 'Flag requirement'}</Button></DialogActions></Dialog>
+      <Dialog open={decisionAction !== null} onClose={() => !busy && setDecisionAction(null)} fullWidth maxWidth="sm"><DialogTitle>{decisionAction === 'approve' ? 'Approve supplier and create ERP record?' : 'Reject supplier?'}</DialogTitle><DialogContent>{decisionAction === 'approve' ? <DialogContentText>This records the human decision, sends the proposed supplier record to the mock ERP, and locks the review.</DialogContentText> : <Stack spacing={2} sx={{ pt: 1 }}><DialogContentText>Provide an auditable rejection reason. No ERP record will be created.</DialogContentText><TextField label="Rejection reason" value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} multiline minRows={3} autoFocus /></Stack>}</DialogContent><DialogActions><Button onClick={() => setDecisionAction(null)} disabled={busy}>Cancel</Button><Button color={decisionAction === 'approve' ? 'success' : 'error'} variant="contained" onClick={() => void saveDecision()} disabled={busy || (decisionAction === 'reject' && rejectionReason.trim().length < 10)}>{busy ? 'Saving decision...' : decisionAction === 'approve' ? 'Confirm approval' : 'Confirm rejection'}</Button></DialogActions></Dialog>
+      <ErpRecordDialog open={showErpRecord} record={erpRecord} onClose={() => setShowErpRecord(false)} />
     </Stack>
   )
 }

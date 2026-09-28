@@ -23,12 +23,8 @@ from app.database import Base
 
 class SupplierStatus(str, enum.Enum):
     NEW = "new"
-    SUBMITTED = "submitted"
-    UNDER_REVIEW = "under_review"
     PROCESSING = "processing"
     NEEDS_REVIEW = "needs_review"
-    CHANGES_REQUESTED = "changes_requested"
-    RESUBMITTED = "resubmitted"
     APPROVED = "approved"
     REJECTED = "rejected"
 
@@ -37,6 +33,26 @@ class DocumentType(str, enum.Enum):
     REGISTRATION = "registration"
     TAX = "tax"
     INSURANCE = "insurance"
+    BANK = "bank"
+    CONF_001 = "CONF-001"
+    SEC_001 = "SEC-001"
+    PRIV_001 = "PRIV-001"
+    CONT_001 = "CONT-001"
+    INS_CYB_001 = "INS-CYB-001"
+    INS_PI_001 = "INS-PI-001"
+    CRED_001 = "CRED-001"
+    PEOP_001 = "PEOP-001"
+    PEOP_002 = "PEOP-002"
+    SITE_001 = "SITE-001"
+    SITE_002 = "SITE-002"
+    FOOD_001 = "FOOD-001"
+    FOOD_002 = "FOOD-002"
+    EVENT_001 = "EVENT-001"
+    TRANS_001 = "TRANS-001"
+    STORE_001 = "STORE-001"
+    PROD_001 = "PROD-001"
+    PAY_001 = "PAY-001"
+    TRAIN_001 = "TRAIN-001"
 
 
 class ProcessingStatus(str, enum.Enum):
@@ -69,6 +85,16 @@ class Supplier(Base):
     name: Mapped[str] = mapped_column(String(200), index=True)
     country: Mapped[str | None] = mapped_column(String(100), nullable=True)
     contact_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    tax_reference: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    bank_account_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    bank_ifsc: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    subcategory: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    account_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("portal_accounts.id"), unique=True, nullable=True
+    )
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    requirements_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     status: Mapped[SupplierStatus] = mapped_column(
         Enum(SupplierStatus, name="supplier_status"),
         default=SupplierStatus.NEW,
@@ -85,8 +111,7 @@ class Supplier(Base):
         DateTime(timezone=True), nullable=True
     )
     erp_supplier_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    review_round: Mapped[int] = mapped_column(Integer, default=0)
-    change_request: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    erp_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     documents: Mapped[list["Document"]] = relationship(
         back_populates="supplier", cascade="all, delete-orphan"
@@ -103,6 +128,30 @@ class Supplier(Base):
     compliance_results: Mapped[list["ComplianceResult"]] = relationship(
         back_populates="supplier", cascade="all, delete-orphan"
     )
+    assistant_messages: Mapped[list["AssistantMessage"]] = relationship(
+        back_populates="supplier", cascade="all, delete-orphan"
+    )
+
+
+class PortalAccount(Base):
+    __tablename__ = "portal_accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(256))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PortalSession(Base):
+    __tablename__ = "portal_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    role: Mapped[str] = mapped_column(String(20))
+    account_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("portal_accounts.id", ondelete="CASCADE"), nullable=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class Document(Base):
@@ -126,8 +175,14 @@ class Document(Base):
     storage_path: Mapped[str] = mapped_column(String(500))
     content_type: Mapped[str] = mapped_column(String(100))
     file_size: Mapped[int]
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
     page_count: Mapped[int] = mapped_column(default=0)
     extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    text_extraction_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ocr_pages: Mapped[list[int]] = mapped_column(JSON, default=list)
+    ocr_language: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    ocr_warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
     redacted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     redaction_summary: Mapped[dict[str, int] | None] = mapped_column(JSON, nullable=True)
     processing_status: Mapped[ProcessingStatus] = mapped_column(
@@ -136,6 +191,14 @@ class Document(Base):
         index=True,
     )
     error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ai_extraction_status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    ai_extraction_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ai_index_status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    ai_index_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    review_status: Mapped[str] = mapped_column(String(20), default="pending")
+    review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -144,6 +207,24 @@ class Document(Base):
     extracted_fields: Mapped[list["ExtractedField"]] = relationship(
         back_populates="document", cascade="all, delete-orphan"
     )
+
+
+class DocumentRevision(Base):
+    """Immutable metadata for an original that is no longer the active upload."""
+
+    __tablename__ = "document_revisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    supplier_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("suppliers.id", ondelete="CASCADE"), index=True)
+    document_type: Mapped[str] = mapped_column(String(40))
+    revision: Mapped[int] = mapped_column(Integer)
+    filename: Mapped[str] = mapped_column(String(255))
+    storage_path: Mapped[str] = mapped_column(String(500))
+    content_type: Mapped[str] = mapped_column(String(100))
+    file_size: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    archived_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class ExtractedField(Base):
@@ -169,6 +250,10 @@ class ExtractedField(Base):
     page_number: Mapped[int] = mapped_column(Integer)
     confidence: Mapped[float] = mapped_column(Float)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    review_status: Mapped[str] = mapped_column(String(20), default="pending")
+    review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -248,3 +333,68 @@ class AuditEvent(Base):
     )
 
     supplier: Mapped[Supplier | None] = relationship(back_populates="audit_events")
+
+
+class AssistantMessage(Base):
+    """Persistent, audience-separated case conversation for one supplier."""
+
+    __tablename__ = "assistant_messages"
+    __table_args__ = (
+        UniqueConstraint(
+            "supplier_id", "audience", "sequence",
+            name="uq_assistant_messages_supplier_audience_sequence",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    supplier_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("suppliers.id", ondelete="CASCADE"), index=True
+    )
+    audience: Mapped[str] = mapped_column(String(20), index=True)
+    role: Mapped[str] = mapped_column(String(20))
+    content: Mapped[str] = mapped_column(Text)
+    citations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    sequence: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    supplier: Mapped[Supplier] = relationship(back_populates="assistant_messages")
+
+
+class ErpSupplierRecord(Base):
+    """Supplier master persisted behind the mock ERP boundary."""
+
+    __tablename__ = "erp_supplier_records"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    erp_supplier_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    source_supplier_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    legal_name: Mapped[str] = mapped_column(String(200), index=True)
+    tax_reference: Mapped[str] = mapped_column(String(100), index=True)
+    bank_account_number: Mapped[str] = mapped_column(String(100), index=True)
+    category: Mapped[str] = mapped_column(String(100))
+    subcategory: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ErpToolAttempt(Base):
+    """Sanitized audit of every validation, creation, and retrieval tool call."""
+
+    __tablename__ = "erp_tool_attempts"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    supplier_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    operation: Mapped[str] = mapped_column(String(60), index=True)
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    attempt_number: Mapped[int] = mapped_column(Integer, default=1)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    request_summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    response_summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

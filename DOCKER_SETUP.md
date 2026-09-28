@@ -50,6 +50,15 @@ cp backend/.env.example backend/.env
 
 `backend/.env` is ignored by Git. Never commit API keys or replace the blank values in `.env.example` with real credentials.
 
+Reviewer and administrator workspaces use one-click access by default for the capstone demo:
+
+```env
+REVIEWER_AUTH_ENABLED=false
+ADMIN_AUTH_ENABLED=false
+```
+
+To require credentials for either role, set its flag to `true` and configure that role's email and password. The two switches are independent. Recreate the backend after changing them. Supplier sign-in always remains enabled because supplier profiles must stay separate.
+
 The Compose file overrides `DATABASE_URL`, `UPLOAD_DIR`, `CHROMA_PATH`, and `FRONTEND_ORIGIN` with container-safe values. You do not need to edit those entries.
 
 ## 4. Configure one AI provider
@@ -115,10 +124,7 @@ Press `Ctrl+C` to stop following logs; the containers continue running in the ba
 
 ## 6. Open and verify VendorLens
 
-Open these two prototype workspaces in separate browser tabs (no login is required):
-
-- Supplier portal: `http://localhost:5173/supplier`
-- Reviewer workspace: `http://localhost:5173/reviewer`
+- Application: `http://localhost:5173`
 - FastAPI documentation: `http://localhost:8000/docs`
 - Backend health: `http://localhost:8000/api/health`
 - Prometheus metrics: `http://localhost:8000/metrics/`
@@ -133,7 +139,7 @@ The health response should report:
 }
 ```
 
-Create a case in the supplier portal, upload registration, tax, and insurance documents, and submit it. Open the case from the reviewer workspace, start the review, and process the documents to verify the configured AI provider. A reviewer can request replacements for individual documents; the supplier portal then provides the correction and resubmission loop. Upload-ready examples are available under `sample_documents/` in the cloned repository.
+Create a supplier in the UI, upload registration, tax, and insurance documents, then process the supplier to verify the configured AI provider. Upload-ready examples are available under `sample_documents/` in the cloned repository.
 
 ## Everyday commands
 
@@ -196,6 +202,7 @@ Named volumes preserve:
 
 - PostgreSQL records and audit history in `vendorlens_postgres_data`.
 - Uploaded source files in `vendorlens_uploads_data`.
+- Originals removed from the active checklist remain in the same uploads volume and are listed as previous uploads. Replacements receive new document IDs and version numbers.
 - Chroma vectors in `vendorlens_chroma_data`.
 
 To inspect them:

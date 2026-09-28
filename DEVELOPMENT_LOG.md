@@ -293,11 +293,22 @@ frontend/src/theme/theme.ts         Single source for all brand colors
 - Rejection requires a reason of at least 10 characters and stores it in the supplier decision and audit history.
 - Finalized suppliers are locked against document changes, field corrections, and AI reprocessing in the demo workflow.
 
-### Mock ERP boundary
+### Mock ERP boundary (superseded by the MCP integration below)
 
 - Added a deterministic local `MockERPService` used only after a valid human approval.
 - Successful approval creates a stable `ERP-...` supplier reference and separate `erp.supplier.created` and `supplier.approved` audit events.
-- The current implementation is a local service abstraction to keep Phase 3 runnable as a two-process demo; no real ERP is contacted.
+- This was the initial Phase 3 implementation and is retained here as historical context. It was replaced by the persistent mock ERP MCP integration below.
+
+### Persistent mock ERP MCP integration
+
+- Replaced the approval-time local ERP function with a separately deployed MCP JSON-RPC service.
+- Added persistent ERP supplier-master records that can be independently listed and retrieved.
+- Added preflight validation for required ERP fields, India scope, category mappings, duplicate tax references, and duplicate bank accounts.
+- Added idempotent creation keyed by the stable `SUP-...` supplier reference, so timeouts and retries cannot create duplicates.
+- Added sanitized ERP tool-attempt records with operation, status, latency, retry count, and error code.
+- ERP unavailability leaves the supplier unapproved and returns a safe retry message instead of a stack trace.
+- The reviewer workspace now displays ERP validation results before enabling approval and provides a read-only mock ERP supplier-master screen.
+- Verification passed with 65 backend tests, Python compilation, frontend lint, and a production frontend build.
 
 ### Frontend
 
@@ -435,6 +446,27 @@ frontend/src/theme/theme.ts         Single source for all brand colors
 - Added `DOCKER_SETUP.md` with fresh-clone provider setup, startup, verification, daily commands, persistence, reset warnings, ports, and troubleshooting.
 - Static Compose YAML parsing passed, backend compilation and all 28 tests passed, and frontend lint and production build passed with 954 transformed modules.
 - Docker was not available in the development environment, so an actual image build and live Compose smoke test remain to be run on a Docker-enabled machine.
+
+## Admin AI Observability and Correlated Langfuse Tracing (2026-09-23)
+
+- Added Administrator as the third landing-page workspace while retaining separately authenticated, admin-only access.
+- Added an admin AI-observability dashboard with configurable time windows, run success, tokens, P95 latency, model/operation/prompt usage, RAG grounding, OCR coverage, ERP tool health, and privacy-safe recent runs.
+- Added correlated Langfuse workflow traces for OCR/text extraction, document processing, supplier RAG, supplier/reviewer assistants, and MCP ERP tools.
+- Added hashed telemetry subjects, assistant/workflow sessions, provider/model/prompt/release metadata, and quality scores for processing, grounding, citations, OCR, and ERP tool success.
+- Removed original filenames from extraction telemetry and the LLM extraction prompt; only the file extension and document type are retained.
+- Normalized OpenRouter model slugs for Langfuse pricing lookup while preserving the complete provider model in metadata.
+- Added `LANGFUSE_DASHBOARD_URL` for the admin-only deep link and documented the recommended VendorLens dashboard widgets.
+- Verification: 77 backend tests passed; frontend production build passed; frontend lint completed with zero errors and two pre-existing warnings.
+
+## Demo Authentication Flow (2026-09-24)
+
+- Supplier authentication now defaults to **Sign in** unless the user explicitly selects **Create account**.
+- Removed the hidden admin link from the supplier sign-in page; reviewer and administrator entry now live only on the three-workspace landing page.
+- Added independent `REVIEWER_AUTH_ENABLED` and `ADMIN_AUTH_ENABLED` runtime flags. Both default to `false` for one-click demo access; either role can independently require its configured email and password.
+- Added a reviewer credential endpoint/page and an admin demo-session endpoint while retaining role-protected reviewer and admin APIs.
+- Replaced the browser's single active login with separate supplier, reviewer, and administrator sessions. Entering a staff workspace no longer discards the supplier login.
+- Updated Docker and demo documentation to match the current staff entry and OCR behavior.
+- Verification: 79 backend tests passed; frontend production build passed; frontend lint completed with zero errors and two pre-existing warnings.
 
 ## Resume Commands
 

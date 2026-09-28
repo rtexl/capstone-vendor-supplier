@@ -2,7 +2,8 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, select
+from app.services.portal_auth import require_reviewer
+from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
@@ -10,29 +11,35 @@ from app.metrics import record_compliance_checks, record_supplier_decision
 from app.models import (
     AuditEvent,
     ComplianceResult,
+    Document,
     ExtractedField,
     Supplier,
     SupplierStatus,
 )
 from app.schemas import (
     ApprovalRequest,
-    ChangesRequest,
     ComplianceResultRead,
     ComplianceRunResponse,
     DecisionResponse,
+    DocumentRead,
+    EvidenceReviewRequest,
+    ErpRecordRead,
+    ErpValidationResponse,
     ExtractedFieldRead,
     ExtractedFieldUpdate,
+    ReviewSelectionRequest,
     RejectionRequest,
-    WorkflowTransitionResponse,
 )
 from app.services.compliance import (
     approval_ready,
     evaluate_compliance,
     persist_compliance_results,
 )
-from app.services.mock_erp import get_mock_erp_service
+from app.services.mock_erp import build_erp_preview
+from app.services.erp_mcp_client import ErpMcpClient, supplier_idempotency_key
+from app.services.erp_tools import ErpToolFailure
 
-router = APIRouter(prefix="/suppliers", tags=["review"])
+router = APIRouter(prefix="/suppliers", tags=["review"], dependencies=[Depends(require_reviewer)])
 
 
 def _get_review_supplier(db: Session, supplier_id: uuid.UUID) -> Supplier:
@@ -42,6 +49,7 @@ def _get_review_supplier(db: Session, supplier_id: uuid.UUID) -> Supplier:
         .options(
             selectinload(Supplier.documents),
             selectinload(Supplier.extracted_fields),
+            selectinload(Supplier.ai_runs),
             selectinload(Supplier.compliance_results),
         )
     )
@@ -51,10 +59,10 @@ def _get_review_supplier(db: Session, supplier_id: uuid.UUID) -> Supplier:
 
 
 def _ensure_reviewable(supplier: Supplier) -> None:
-    if supplier.status not in {SupplierStatus.UNDER_REVIEW, SupplierStatus.NEEDS_REVIEW}:
+    if supplier.status in {SupplierStatus.APPROVED, SupplierStatus.REJECTED}:
         raise HTTPException(
             status_code=409,
-            detail="The supplier case must be open in the reviewer workspace.",
+            detail="A finalized supplier cannot be changed in this demo workflow.",
         )
 
 
@@ -124,10 +132,11 @@ def correct_extracted_field(
     field.page_number = payload.page_number
     field.confidence = 1.0
     field.needs_review = False
+    field.review_status = "corrected"
+    field.review_comment = "Value corrected and verified by the reviewer."
+    field.reviewed_by = payload.reviewer_name.strip()
+    field.reviewed_at = datetime.now(UTC)
     supplier.status = SupplierStatus.NEEDS_REVIEW
-    db.execute(
-        delete(ComplianceResult).where(ComplianceResult.supplier_id == supplier_id)
-    )
     db.add(
         AuditEvent(
             supplier_id=supplier_id,
@@ -143,9 +152,128 @@ def correct_extracted_field(
             },
         )
     )
+    persist_compliance_results(db, supplier, evaluate_compliance(supplier))
     db.commit()
     db.refresh(field)
     return ExtractedFieldRead.model_validate(field)
+
+
+@router.post("/{supplier_id}/fields/review", response_model=list[ExtractedFieldRead])
+def review_extracted_fields(
+    supplier_id: uuid.UUID,
+    payload: ReviewSelectionRequest,
+    db: Session = Depends(get_db),
+) -> list[ExtractedFieldRead]:
+    supplier = _get_review_supplier(db, supplier_id)
+    _ensure_reviewable(supplier)
+    if payload.action == "dispute" and not (payload.reason or "").strip():
+        raise HTTPException(status_code=422, detail="A reason is required when fields are flagged.")
+    selected = [field for field in supplier.extracted_fields if field.id in set(payload.ids)]
+    if len(selected) != len(set(payload.ids)):
+        raise HTTPException(status_code=404, detail="One or more extracted fields were not found.")
+    now = datetime.now(UTC)
+    for field in selected:
+        field.review_status = "verified" if payload.action == "verify" else "disputed"
+        field.needs_review = payload.action == "dispute"
+        field.review_comment = (payload.reason or "Verified against the source document.").strip()
+        field.reviewed_by = payload.reviewer_name.strip()
+        field.reviewed_at = now
+    event_action = "verified" if payload.action == "verify" else "disputed"
+    db.add(AuditEvent(
+        supplier_id=supplier_id, action=f"extracted_fields.{event_action}",
+        entity_type="extracted_field", entity_id=None,
+        details={"field_ids": [str(item.id) for item in selected],
+                 "reviewer_name": payload.reviewer_name.strip(), "reason": payload.reason},
+    ))
+    persist_compliance_results(db, supplier, evaluate_compliance(supplier))
+    db.commit()
+    return [ExtractedFieldRead.model_validate(item) for item in selected]
+
+
+@router.post("/{supplier_id}/documents/{document_id}/review", response_model=DocumentRead)
+def review_evidence(
+    supplier_id: uuid.UUID,
+    document_id: uuid.UUID,
+    payload: EvidenceReviewRequest,
+    db: Session = Depends(get_db),
+) -> DocumentRead:
+    supplier = _get_review_supplier(db, supplier_id)
+    _ensure_reviewable(supplier)
+    document = next((item for item in supplier.documents if item.id == document_id), None)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Evidence document was not found.")
+    if payload.action == "dispute" and not (payload.reason or "").strip():
+        raise HTTPException(status_code=422, detail="A reason is required when evidence is flagged.")
+    now = datetime.now(UTC)
+    reviewer_name = payload.reviewer_name.strip()
+    document.review_status = "verified" if payload.action == "verify" else "disputed"
+    document.review_comment = (payload.reason or "Requirement confirmed against the original evidence.").strip()
+    document.reviewed_by = reviewer_name
+    document.reviewed_at = now
+    reviewed_fields: list[ExtractedField] = []
+    if payload.action == "verify":
+        reviewed_fields = [
+            field for field in supplier.extracted_fields if field.document_id == document.id
+        ]
+        for field in reviewed_fields:
+            if field.review_status != "corrected":
+                field.review_status = "verified"
+                field.review_comment = "Verified with the source requirement."
+            field.needs_review = False
+            field.reviewed_by = reviewer_name
+            field.reviewed_at = now
+    event_action = "verified" if payload.action == "verify" else "disputed"
+    db.add(AuditEvent(
+        supplier_id=supplier_id, action=f"document.{event_action}",
+        entity_type="document", entity_id=str(document.id),
+        details={
+            "reviewer_name": reviewer_name,
+            "reason": payload.reason,
+            "extracted_field_ids": [str(field.id) for field in reviewed_fields],
+            "extracted_field_count": len(reviewed_fields),
+            "compliance_results_recalculated": True,
+        },
+    ))
+    persist_compliance_results(db, supplier, evaluate_compliance(supplier))
+    db.commit()
+    db.refresh(document)
+    return DocumentRead.model_validate(document)
+
+
+@router.post("/{supplier_id}/erp/validate", response_model=ErpValidationResponse)
+def validate_erp_record(
+    supplier_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> ErpValidationResponse:
+    supplier = _get_review_supplier(db, supplier_id)
+    preview = build_erp_preview(supplier)
+    try:
+        result = ErpMcpClient().call(db, "validate_supplier_record", {
+            "payload": preview.payload,
+            "idempotency_key": supplier_idempotency_key(supplier.id),
+            "source_supplier_id": str(supplier.id),
+        })
+    except ErpToolFailure as exc:
+        raise HTTPException(status_code=503 if exc.retryable else 409, detail=exc.message) from exc
+    return ErpValidationResponse(**result)
+
+
+@router.get("/{supplier_id}/erp/record", response_model=ErpRecordRead)
+def retrieve_erp_record(
+    supplier_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> ErpRecordRead:
+    supplier = _get_review_supplier(db, supplier_id)
+    if not supplier.erp_supplier_id:
+        raise HTTPException(status_code=404, detail="This supplier does not have an ERP record yet.")
+    try:
+        result = ErpMcpClient().call(db, "get_supplier_record", {
+            "erp_supplier_id": supplier.erp_supplier_id,
+            "source_supplier_id": str(supplier.id),
+        })
+    except ErpToolFailure as exc:
+        raise HTTPException(status_code=503 if exc.retryable else 404, detail=exc.message) from exc
+    return ErpRecordRead(**result)
 
 
 @router.post("/{supplier_id}/approve", response_model=DecisionResponse)
@@ -165,7 +293,6 @@ def approve_supplier(
             erp_supplier_id=supplier.erp_supplier_id,
             decided_at=supplier.decided_at or datetime.now(UTC),
         )
-    _ensure_reviewable(supplier)
 
     results = persist_compliance_results(db, supplier, evaluate_compliance(supplier))
     record_compliance_checks([result.status.value for result in results])
@@ -176,18 +303,42 @@ def approve_supplier(
             detail="All compliance checks must pass before approval.",
         )
 
-    erp_result = get_mock_erp_service().create_supplier(supplier)
+    preview = build_erp_preview(supplier)
+    client = ErpMcpClient()
+    try:
+        validation = client.call(db, "validate_supplier_record", {
+            "payload": preview.payload,
+            "idempotency_key": supplier_idempotency_key(supplier.id),
+            "source_supplier_id": str(supplier.id),
+        })
+        if not validation.get("valid"):
+            problems = "; ".join(str(item.get("message")) for item in validation.get("errors", []))
+            db.commit()
+            raise HTTPException(status_code=409, detail=f"ERP validation failed. {problems}")
+        erp_result = client.call(db, "create_supplier_record", {
+            "payload": preview.payload,
+            "idempotency_key": supplier_idempotency_key(supplier.id),
+            "source_supplier_id": str(supplier.id),
+        })
+    except ErpToolFailure as exc:
+        db.add(AuditEvent(
+            supplier_id=supplier.id, action="erp.supplier.create_failed", entity_type="supplier",
+            entity_id=str(supplier.id), details={"code": exc.code, "retryable": exc.retryable},
+        ))
+        db.commit()
+        raise HTTPException(status_code=503 if exc.retryable else 409, detail=exc.message) from exc
     supplier.status = SupplierStatus.APPROVED
     supplier.decision_reason = "Approved after human review."
-    supplier.decided_at = erp_result.completed_at
-    supplier.erp_supplier_id = erp_result.supplier_id
+    supplier.decided_at = datetime.now(UTC)
+    supplier.erp_supplier_id = str(erp_result["erp_supplier_id"])
+    supplier.erp_payload = dict(erp_result["payload"])
     db.add(
         AuditEvent(
             supplier_id=supplier.id,
             action="erp.supplier.created",
             entity_type="supplier",
-            entity_id=erp_result.supplier_id,
-            details={"status": erp_result.status},
+            entity_id=supplier.erp_supplier_id,
+            details={"status": erp_result["status"], "payload_fields": sorted(supplier.erp_payload), "idempotent_replay": erp_result.get("idempotent_replay", False), "transport": "mcp"},
         )
     )
     db.add(
@@ -198,7 +349,7 @@ def approve_supplier(
             entity_id=str(supplier.id),
             details={
                 "reviewer_name": payload.reviewer_name.strip(),
-                "erp_supplier_id": erp_result.supplier_id,
+                "erp_supplier_id": supplier.erp_supplier_id,
             },
         )
     )
@@ -230,13 +381,13 @@ def reject_supplier(
             erp_supplier_id=None,
             decided_at=supplier.decided_at or datetime.now(UTC),
         )
-    _ensure_reviewable(supplier)
 
     decided_at = datetime.now(UTC)
     supplier.status = SupplierStatus.REJECTED
     supplier.decision_reason = payload.reason.strip()
     supplier.decided_at = decided_at
     supplier.erp_supplier_id = None
+    supplier.erp_payload = None
     db.add(
         AuditEvent(
             supplier_id=supplier.id,
@@ -257,104 +408,4 @@ def reject_supplier(
         message="Supplier rejected with an audited reason.",
         erp_supplier_id=None,
         decided_at=decided_at,
-    )
-
-
-@router.post("/{supplier_id}/review/start", response_model=WorkflowTransitionResponse)
-def start_review(
-    supplier_id: uuid.UUID,
-    db: Session = Depends(get_db),
-) -> WorkflowTransitionResponse:
-    supplier = _get_review_supplier(db, supplier_id)
-    if supplier.status == SupplierStatus.UNDER_REVIEW:
-        return WorkflowTransitionResponse(
-            supplier_id=supplier.id,
-            status=supplier.status,
-            message="Review is already in progress.",
-            review_round=supplier.review_round,
-        )
-    if supplier.status not in {SupplierStatus.SUBMITTED, SupplierStatus.RESUBMITTED}:
-        raise HTTPException(
-            status_code=409,
-            detail="Only submitted or resubmitted cases can be opened for review.",
-        )
-    supplier.status = SupplierStatus.UNDER_REVIEW
-    db.add(
-        AuditEvent(
-            supplier_id=supplier.id,
-            action="supplier.review_started",
-            entity_type="supplier",
-            entity_id=str(supplier.id),
-            details={"review_round": supplier.review_round},
-        )
-    )
-    db.commit()
-    return WorkflowTransitionResponse(
-        supplier_id=supplier.id,
-        status=supplier.status,
-        message=f"Review round {supplier.review_round} started.",
-        review_round=supplier.review_round,
-    )
-
-
-@router.post("/{supplier_id}/request-changes", response_model=WorkflowTransitionResponse)
-def request_supplier_changes(
-    supplier_id: uuid.UUID,
-    payload: ChangesRequest,
-    db: Session = Depends(get_db),
-) -> WorkflowTransitionResponse:
-    supplier = _get_review_supplier(db, supplier_id)
-    _ensure_reviewable(supplier)
-    documents_by_id = {document.id: document for document in supplier.documents}
-    requested_ids = [item.document_id for item in payload.documents]
-    if len(requested_ids) != len(set(requested_ids)):
-        raise HTTPException(status_code=422, detail="Each document can only be flagged once.")
-    missing_ids = [
-        str(document_id)
-        for document_id in requested_ids
-        if document_id not in documents_by_id
-    ]
-    if missing_ids:
-        raise HTTPException(
-            status_code=422,
-            detail="Every flagged document must belong to this supplier case.",
-        )
-
-    requested_at = datetime.now(UTC)
-    document_feedback = [
-        {
-            "document_id": str(item.document_id),
-            "document_type": documents_by_id[item.document_id].document_type.value,
-            "filename": documents_by_id[item.document_id].filename,
-            "reason": item.reason.strip(),
-        }
-        for item in payload.documents
-    ]
-    change_request = {
-        "review_round": supplier.review_round,
-        "requested_at": requested_at.isoformat(),
-        "reviewer_name": payload.reviewer_name.strip(),
-        "general_reason": payload.general_reason.strip() if payload.general_reason else None,
-        "documents": document_feedback,
-    }
-    supplier.status = SupplierStatus.CHANGES_REQUESTED
-    supplier.change_request = change_request
-    db.execute(
-        delete(ComplianceResult).where(ComplianceResult.supplier_id == supplier_id)
-    )
-    db.add(
-        AuditEvent(
-            supplier_id=supplier.id,
-            action="supplier.changes_requested",
-            entity_type="supplier",
-            entity_id=str(supplier.id),
-            details=change_request,
-        )
-    )
-    db.commit()
-    return WorkflowTransitionResponse(
-        supplier_id=supplier.id,
-        status=supplier.status,
-        message="Changes requested from the supplier.",
-        review_round=supplier.review_round,
     )
