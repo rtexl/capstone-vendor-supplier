@@ -30,7 +30,6 @@ from app.services.policy_retrieval import application_answer_for, application_co
 from app.services.retrieval import get_chunk_collection
 from app.services.compliance import evaluate_compliance, persist_compliance_results
 from app.services.assistant_history import clear_history, conversation_history, save_exchange
-from app.services.tracing import telemetry_subject_id
 
 router = APIRouter(prefix="/portal", tags=["portal"])
 
@@ -283,7 +282,11 @@ def application_assistant(
             persisted_payload,
             settings,
             application_context_for(supplier),
-            telemetry_subject=telemetry_subject_id(supplier.id),
+            {
+                "supplier_reference": f"SUP-{supplier.id.hex[:8].upper()}",
+                "category": supplier.category or "unselected",
+                "subcategory": supplier.subcategory or "unselected",
+            },
         )
     save_exchange(db, supplier.id, "supplier", question, response.answer)
     return response

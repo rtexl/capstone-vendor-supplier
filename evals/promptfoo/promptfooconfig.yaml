@@ -12,12 +12,22 @@ providers:
     config:
       base_url: http://localhost:8000
       timeout_seconds: 90
+  - id: file://application_assistant_provider.py
+    label: vendorlens-application-assistant
+    config:
+      base_url: http://localhost:8000
+      timeout_seconds: 90
+      seed_test_application: true
+      category: TECH
+      subcategory: TECH-CYB
 
 prompts:
   - '{{question}}'
 
 tests:
-  - description: RAG returns the supplier legal name with a citation
+  # These RAG cases intentionally retain the pre-portal Kaveri corpus. It is
+  # a regression fixture for legacy reviewer-created supplier records.
+  - description: Legacy RAG returns the supplier legal name with a citation
     providers: [vendorlens-supplier-rag]
     vars:
       supplier_name: Kaveri Flow Controls Private Limited
@@ -30,7 +40,7 @@ tests:
       - type: python
         value: file://assertions.py:check_rag
 
-  - description: RAG answers commercial payment terms from the registration document
+  - description: Legacy RAG answers commercial payment terms from the registration document
     providers: [vendorlens-supplier-rag]
     vars:
       supplier_name: Kaveri Flow Controls Private Limited
@@ -43,7 +53,7 @@ tests:
       - type: python
         value: file://assertions.py:check_rag
 
-  - description: RAG maps the insurance policy period end to expiry
+  - description: Legacy RAG maps the insurance policy period end to expiry
     providers: [vendorlens-supplier-rag]
     vars:
       supplier_name: Kaveri Flow Controls Private Limited
@@ -56,7 +66,7 @@ tests:
       - type: python
         value: file://assertions.py:check_rag
 
-  - description: RAG refuses to invent an absent bank balance
+  - description: Legacy RAG refuses to invent an absent bank balance
     providers: [vendorlens-supplier-rag]
     vars:
       supplier_name: Kaveri Flow Controls Private Limited
@@ -69,7 +79,7 @@ tests:
       - type: python
         value: file://assertions.py:check_rag
 
-  - description: RAG remains isolated from other supplier records
+  - description: Legacy RAG remains isolated from other supplier records
     providers: [vendorlens-supplier-rag]
     vars:
       supplier_name: Kaveri Flow Controls Private Limited
@@ -86,11 +96,11 @@ tests:
       - type: python
         value: file://assertions.py:check_rag
 
-  - description: Assistant states the three required VendorLens uploads
+  - description: Global assistant explains category-specific evidence
     providers: [vendorlens-general-assistant]
     vars:
-      question: What documents do I need to upload before processing?
-      expected_terms: [supplier registration form, tax registration certificate, insurance certificate]
+      question: For a cybersecurity supplier, what evidence is required?
+      expected_terms: [Business registration, Bank account verification, Cyber liability coverage]
       forbidden_terms: [API key, password, bank account number]
       max_latency_ms: 5000
     assert:
@@ -100,7 +110,7 @@ tests:
   - description: Assistant explains the end-to-end onboarding flow
     providers: [vendorlens-general-assistant]
     vars:
-      question: What happens after I upload all three documents?
+      question: What happens after I submit my required evidence?
       expected_terms: [process, review, compliance, approve]
       forbidden_terms: [automatically approves, guaranteed approval]
       max_latency_ms: 5000
@@ -126,6 +136,44 @@ tests:
       expected_terms: [Ask about this supplier, uploaded documents]
       forbidden_terms: [30 JUN 2027, I inspected the supplier record]
       max_latency_ms: 5000
+    assert:
+      - type: python
+        value: file://assertions.py:check_assistant
+
+  - description: Signed-in application assistant lists the cybersecurity checklist
+    providers: [vendorlens-application-assistant]
+    vars:
+      question: What documents am I supposed to upload?
+      expected_terms:
+        - Business registration
+        - Tax registration or accepted tax status
+        - Bank account verification
+        - Confidentiality undertaking
+        - Information security assessment
+        - Personal data handling assessment
+        - Service continuity
+        - Cyber liability coverage
+      max_latency_ms: 1000
+    assert:
+      - type: python
+        value: file://assertions.py:check_assistant
+
+  - description: Signed-in application assistant reports a draft's missing evidence
+    providers: [vendorlens-application-assistant]
+    vars:
+      question: Have I uploaded all required documents?
+      expected_terms: [0 of 8, Business registration, Bank account verification, Cyber liability coverage]
+      max_latency_ms: 1000
+    assert:
+      - type: python
+        value: file://assertions.py:check_assistant
+
+  - description: Signed-in application assistant reports the draft review state
+    providers: [vendorlens-application-assistant]
+    vars:
+      question: Is my application review complete?
+      expected_terms: [draft, not been submitted]
+      max_latency_ms: 1000
     assert:
       - type: python
         value: file://assertions.py:check_assistant

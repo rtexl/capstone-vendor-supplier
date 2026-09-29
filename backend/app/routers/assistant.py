@@ -22,11 +22,10 @@ def chat(payload: GeneralAssistantRequest, settings: Settings = Depends(get_sett
     return answer_chat(payload, settings)
 
 
-def answer_chat(
+def _answer_chat(
     payload: GeneralAssistantRequest,
     settings: Settings,
     application_context: str = "",
-    telemetry_subject: str | None = None,
 ) -> GeneralAssistantResponse:
     if payload.messages[-1].role != "user":
         raise HTTPException(status_code=422, detail="The last message must be a user question.")
@@ -63,26 +62,7 @@ def answer_chat(
         context = policy_context_for(payload.messages[-1].content)
         if application_context:
             context = f"{application_context}\n\n{context}"
-        with get_langfuse_tracer().trace(
-            name="supplier.assistant.conversation",
-            input_data={"message_count": len(sanitized_messages), "question_chars": len(question)},
-            metadata={
-                "feature": "supplier_assistant",
-                "provider": settings.ai_provider,
-                "model": settings.active_answer_model,
-                "prompt_version": settings.assistant_prompt_version,
-                "application_context": bool(application_context),
-            },
-            subject_id=telemetry_subject,
-            session_id=f"{telemetry_subject}-supplier-assistant" if telemetry_subject else None,
-            tags=["assistant", "supplier", settings.ai_provider],
-        ) as trace:
-            result = ai.answer_general_question(sanitized_messages, context)
-            trace.update(output={
-                "answer_chars": len(result.value.answer),
-                "redaction_count": sum(redaction_counts.values()),
-            })
-            trace.score_trace(name="response_completed", value=1)
+        result = ai.answer_general_question(sanitized_messages, context)
     except Exception as exc:
         raise HTTPException(status_code=502, detail="The supplier assistant could not answer this question.") from exc
 
@@ -97,3 +77,71 @@ def answer_chat(
             redaction_counts=redaction_counts,
         ),
     )
+
+
+def answer_chat(
+    payload: GeneralAssistantRequest,
+    settings: Settings,
+    application_context: str = "",
+    trace_metadata: dict[str, str] | None = None,
+) -> GeneralAssistantResponse:
+    """Trace one assistant turn without recording unredacted conversation content."""
+    tracer = get_langfuse_tracer()
+    metadata = {
+        "ai_provider": settings.ai_provider,
+        "operation": "supplier_assistant",
+        "prompt_version": settings.assistant_prompt_version,
+        "assistant_scope": "application" if application_context else "general",
+        **(trace_metadata or {}),
+    }
+    sanitized_messages = []
+    for message in payload.messages:
+        sanitized_messages.append(
+            {
+                "role": message.role,
+                "content": redact_pii(message.content).text,
+            }
+        )
+    trace_input = tracer.input_payload(
+        {
+            "message_count": len(payload.messages),
+            "message_characters": sum(len(message.content) for message in payload.messages),
+        },
+        {
+            "messages": sanitized_messages,
+            "application_context": application_context,
+        },
+    )
+    with tracer.workflow(
+        name="supplier.assistant",
+        input_data=trace_input,
+        metadata=metadata,
+        version=settings.assistant_prompt_version,
+        tags=["supplier-assistant", settings.ai_provider],
+    ) as workflow:
+        try:
+            response = _answer_chat(
+                payload,
+                settings,
+                application_context,
+            )
+        except Exception as exc:
+            workflow.update(
+                level="ERROR",
+                status_message=f"{type(exc).__name__}: assistant request failed",
+                output={"status": "failed"},
+            )
+            raise
+
+        trace_output = tracer.output_payload(
+            {
+                "status": "succeeded",
+                "model": response.run.model,
+                "input_tokens": response.run.input_tokens,
+                "output_tokens": response.run.output_tokens,
+            },
+            {"answer": response.answer},
+        )
+        workflow.update(output=trace_output)
+        workflow.set_trace_io(input_data=trace_input, output_data=trace_output)
+        return response
