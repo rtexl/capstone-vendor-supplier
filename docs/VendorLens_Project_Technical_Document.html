@@ -60,9 +60,9 @@
   </div>
   <p class="lead">As-built architecture, implementation, data, integration, security, deployment, testing, and operational reference.</p>
   <table class="doc-meta">
-    <tr><td>Document version</td><td>1.0</td></tr>
-    <tr><td>Prepared</td><td>28 September 2026</td></tr>
-    <tr><td>Code baseline</td><td><code>supplier-rag-feature</code> at <code>f54fc07</code></td></tr>
+    <tr><td>Document version</td><td>1.1</td></tr>
+    <tr><td>Prepared</td><td>5 October 2026</td></tr>
+    <tr><td>Code baseline</td><td><code>merge_branch</code> at <code>c2a23e4</code></td></tr>
     <tr><td>System version</td><td>VendorLens AI API 0.1.0</td></tr>
     <tr><td>Status</td><td>As-built technical reference</td></tr>
     <tr><td>Audience</td><td>Engineering, assessors, reviewers, administrators, and operations</td></tr>
@@ -106,8 +106,8 @@
 <h2>1.2 Proposed solution</h2>
 <p>VendorLens provides three role-specific workspaces:</p>
 <ul>
-  <li><strong>Supplier portal:</strong> account registration, India-based business details, category selection, dynamic evidence checklist, uploads, submission, correction/resubmission, and a scoped onboarding assistant.</li>
-  <li><strong>Reviewer workbench:</strong> case list, original evidence, extracted values with page references and confidence, document/field verification, policy checks, grounded case chat, approval or rejection, and ERP record retrieval.</li>
+  <li><strong>Supplier portal:</strong> account registration, India-based business details, category selection, dynamic evidence checklist, pre-acceptance upload validation, OCR reliability and extracted-value preview, submission, correction/resubmission, and a scoped onboarding assistant.</li>
+  <li><strong>Reviewer workbench:</strong> case list, attention/matched/verified/flagged requirement queues, original evidence, extracted values with page references and confidence, OCR correction, individual or guarded bulk confirmation, AI-assisted flag-reason drafting, grounded case chat, approval or rejection, and ERP record retrieval.</li>
   <li><strong>Administrator workspace:</strong> profile maintenance and aggregate AI/OCR/ERP observability.</li>
 </ul>
 
@@ -116,7 +116,7 @@
 <p>The implementation combines React and Material UI, a FastAPI service layer, PostgreSQL for durable business state and audit records, local file storage for document originals, ChromaDB for supplier-scoped vectors, an OpenRouter-or-Azure OpenAI provider boundary, and a separate JSON-RPC mock ERP MCP service. Docker Compose assembles the local system.</p>
 
 <h2>1.4 Current maturity</h2>
-<p>The repository represents a feature-rich capstone/demo implementation rather than a production procurement platform. It includes schema migrations through revision <code>0014_document_ocr</code>, 79 backend test functions across 18 test modules, configurable staff authentication, local OCR, privacy-conscious telemetry, and end-to-end workflow controls. Production use still requires hardened identity, secret management, object storage, network encryption, retention controls, malware scanning, authorization policy, backup/restore procedures, and independent security and regulatory review.</p>
+<p>The repository represents a feature-rich capstone/demo implementation rather than a production procurement platform. It includes schema migrations through revision <code>0017_erp_identifier_separation</code>, 92 backend test functions across 21 test modules, configurable staff authentication, staged upload validation, local OCR with reliability scoring, privacy-conscious telemetry, guarded bulk review, and end-to-end workflow controls. Production use still requires hardened identity, secret management, object storage, network encryption, retention controls, malware scanning, authorization policy, backup/restore procedures, and independent security and regulatory review.</p>
 
 <h1 id="purpose-scope">2. Purpose, scope, and users</h1>
 
@@ -124,11 +124,12 @@
 <table>
   <tr><th>Objective</th><th>Implemented response</th></tr>
   <tr><td>Reduce manual transcription</td><td>AI extracts structured values from redacted document text and retains source page and confidence.</td></tr>
+  <tr><td>Prevent bad evidence entering the case</td><td>Uploads remain temporary until readability, expected type, required fields, OCR quality, and conservative supplier-identity comparisons pass.</td></tr>
   <tr><td>Make review traceable</td><td>Original files, SHA-256 digests, revisions, citations, policy evidence, and audit events are linked to the supplier case.</td></tr>
   <tr><td>Prevent unsupported answers</td><td>Document Q&amp;A retrieves only supplier-filtered chunks and enforces cited evidence or an exact not-found response.</td></tr>
   <tr><td>Apply policy consistently</td><td>A versioned synthetic policy catalogue maps one of 24 subcategories to a baseline plus category-specific evidence and two checks per requirement.</td></tr>
   <tr><td>Preserve human accountability</td><td>AI matches remain <code>NEEDS_REVIEW</code> until a reviewer verifies evidence; every compliance item must pass before approval.</td></tr>
-  <tr><td>Make downstream creation safe</td><td>The mock ERP validates required data and duplicates, then creates records with a supplier-derived idempotency key.</td></tr>
+  <tr><td>Make downstream creation safe</td><td>The mock ERP validates required data and duplicates, then creates records with a supplier-derived idempotency key and returns distinct onboarding, ERP-record, and Vendor Master identifiers.</td></tr>
 </table>
 
 <h2>2.2 In scope</h2>
@@ -137,9 +138,9 @@
   <li>One primary category and one subcategory per application.</li>
   <li>Baseline registration, tax, and bank evidence plus category-specific controls.</li>
   <li>PDF, PNG, JPEG, and UTF-8 text evidence up to the configured size limit (10 MB by default).</li>
-  <li>Native PDF text extraction and page-selective local Tesseract OCR.</li>
+  <li>Temporary upload staging, native PDF text extraction, page-selective local Tesseract OCR, AI-assisted file classification, required-field checks, and conservative supplier-detail matching.</li>
   <li>PII redaction before configured external AI calls, structured extraction, embeddings, cited Q&amp;A, and scoped assistants.</li>
-  <li>Reviewer validation, correction cycles, compliance outcomes, approval/rejection, audit, and mock ERP creation.</li>
+  <li>Reviewer validation, OCR/extraction correction, guarded bulk confirmation, correction cycles, compliance outcomes, approval/rejection, audit, mock ERP creation, and read-only Vendor Master export.</li>
 </ul>
 
 <h2>2.3 Explicitly out of scope</h2>
@@ -154,8 +155,8 @@
 <h2>2.4 Personas and responsibility boundaries</h2>
 <table>
   <tr><th>Persona</th><th>Primary actions</th><th>Boundary</th></tr>
-  <tr><td>Supplier</td><td>Maintain own application, select category, upload required evidence, submit/resubmit, read reviewer feedback, use onboarding assistant.</td><td>Cannot access another supplier, reviewer controls, admin data, or ERP tools.</td></tr>
-  <tr><td>Reviewer</td><td>Inspect all cases, process/reprocess evidence, review fields/documents, run compliance, ask case questions, decide, validate and retrieve ERP records.</td><td>Cannot administer supplier accounts; approval remains subject to compliance gates.</td></tr>
+  <tr><td>Supplier</td><td>Maintain own application, select category, upload validated evidence, inspect read-only OCR values, submit/resubmit, read reviewer feedback, use onboarding assistant.</td><td>Cannot edit extracted evidence values, access another supplier, use reviewer/admin controls, or call ERP tools.</td></tr>
+  <tr><td>Reviewer</td><td>Inspect all cases, process/reprocess evidence, correct and confirm fields/documents individually or in a safe batch, run compliance, ask case questions, decide, validate/retrieve ERP records, and search/export the Vendor Master.</td><td>Cannot administer supplier accounts; approval remains subject to compliance and ERP validation gates.</td></tr>
   <tr><td>Administrator</td><td>List/delete profiles, reset passwords, inspect aggregated operational/AI metrics.</td><td>Separate role and route family; not the case decision-maker.</td></tr>
   <tr><td>AI provider</td><td>Structured extraction, embeddings, grounded answers, and assistants when configured.</td><td>Receives redacted text; does not call the ERP or approve suppliers.</td></tr>
   <tr><td>Mock ERP service</td><td>Validate, create, retrieve, and list supplier-master records.</td><td>Named tools and explicit application calls only; no LLM-controlled tool loop.</td></tr>
@@ -173,23 +174,37 @@ Business details + one category/subcategory
 Dynamic checklist (3 baseline + mapped evidence)
         │
         ▼
-Upload → native extraction / selective OCR → READY or FAILED
+Upload to temporary staging
         │
         ▼
-Submit → checklist snapshot → background AI processing
+Native extraction / selective OCR → reliability score
         │
         ▼
-Redaction → extraction → canonical fields → embeddings → compliance
+AI type + required-field + supplier-detail checks
+        │
+        ├──────── reject with exact feedback ───────► temporary file removed
+        │
+        └──────── pass / manual-review band ───────► promote file + OCR preview
         │
         ▼
-Reviewer inspects originals, sources, mismatches, checks and assistant answers
+Submit → checklist snapshot → PROCESSING → background AI indexing/compliance
         │
-        ├──────── flag evidence / correction ────────► supplier resubmits
+        ▼
+Redaction → canonical fields → embeddings → persisted compliance
+        │
+        ▼
+Reviewer filters requirements, compares originals, corrects values and reviews checks
+        │
+        ├──────── confirm one / safe matched batch ─► checks recalculated
+        ├──────── editable AI-drafted flag reason ──► supplier corrects/resubmits
         │
         ├──────── reject with audited reason ───────► REJECTED
         │
-        └──────── all checks PASS + approve ────────► ERP create → APPROVED</pre></div>
-<p class="caption">Figure 1. Implemented supplier lifecycle. Submission persists even if optional AI processing fails.</p>
+        └──────── all PASS + ERP validation + approve
+                                                    │
+                                                    ▼
+              portal reference + ERP record ID + Vendor ID → Vendor Master</pre></div>
+<p class="caption">Figure 1. Implemented supplier lifecycle. Rejected uploads never become case evidence; a submitted application remains durable if later background processing fails.</p>
 
 <h2>3.2 Supplier state model</h2>
 <table>
@@ -203,10 +218,12 @@ Reviewer inspects originals, sources, mismatches, checks and assistant answers
 
 <h2>3.3 Important workflow semantics</h2>
 <ul>
-  <li><strong>Upload readiness is not compliance.</strong> A readable document fills a checklist slot; it does not prove that required values or thresholds are correct.</li>
+  <li><strong>Upload acceptance is not compliance.</strong> Pre-acceptance checks reject unreadable, wrong-type, obviously wrong-supplier, incomplete, or very low-quality evidence, but do not establish authenticity or final policy compliance.</li>
+  <li><strong>OCR reliability is triaged.</strong> Poor scans are rejected, uncertain scans are accepted only into a manual-attention state, and clear scans still require human comparison before approval.</li>
   <li><strong>Submission is durable.</strong> An AI/provider failure is recorded for review but does not roll back the supplier submission.</li>
   <li><strong>Requirements are frozen.</strong> The selected checklist is saved as a requirements snapshot on first submission, protecting the case from silent future catalogue changes.</li>
   <li><strong>Corrections are bounded.</strong> Category/subcategory cannot change during a correction cycle. Disputed evidence can be replaced and resubmitted.</li>
+  <li><strong>Bulk confirmation is conservative.</strong> Only pending, fully processed requirements with matched checks are eligible; OCR/manual-attention, failed, disputed, and already reviewed items are excluded.</li>
   <li><strong>Finalization is guarded.</strong> Finalized cases cannot be reprocessed or modified through the normal workflow.</li>
 </ul>
 
@@ -268,7 +285,8 @@ Reviewer inspects originals, sources, mismatches, checks and assistant answers
   <tr><td><code>/reviewer/login</code></td><td>Reviewer access</td><td>Public entry</td></tr>
   <tr><td><code>/review</code></td><td>Reviewer case dashboard</td><td>Reviewer</td></tr>
   <tr><td><code>/review/suppliers/:supplierId</code></td><td>Case workbench</td><td>Reviewer</td></tr>
-  <tr><td><code>/review/erp</code></td><td>ERP supplier records</td><td>Reviewer</td></tr>
+  <tr><td><code>/review/vendor-master</code></td><td>Searchable, read-only ERP Vendor Master</td><td>Reviewer</td></tr>
+  <tr><td><code>/review/erp</code></td><td>Legacy redirect to the Vendor Master</td><td>Reviewer</td></tr>
   <tr><td><code>/admin/login</code></td><td>Administrator access</td><td>Public entry</td></tr>
   <tr><td><code>/admin</code></td><td>Profiles and AI observability</td><td>Administrator</td></tr>
 </table>
@@ -288,10 +306,13 @@ Reviewer inspects originals, sources, mismatches, checks and assistant answers
 <h2>5.4 User-experience controls</h2>
 <ul>
   <li>Dynamic checklist entries are derived from the selected subcategory.</li>
-  <li>Uploaded types disappear from available upload choices and revision/history actions remain contextual.</li>
-  <li>Processing, OCR, review, compliance, decision, and ERP statuses are shown independently.</li>
+  <li>Each selected file shows an in-progress validation state. A file appears in the checklist only after temporary-stage checks pass; rejection feedback identifies unreadability, wrong type, missing information, identity mismatch, low OCR quality, or validation unavailability.</li>
+  <li>OCR evidence shows a reliability percentage and read-only extracted-value preview. Suppliers replace a file when the preview is wrong; reviewers can correct the value and page against the original.</li>
+  <li>The reviewer workbench groups requirements into needs-attention, matched, verified, and flagged views and exposes <em>Confirm all</em> only for the matched subset.</li>
+  <li>Processing, upload validation, OCR, review, compliance, decision, ERP record, and Vendor ID statuses are shown independently.</li>
   <li>Original files open through authenticated API endpoints with no-store headers and integrity verification.</li>
   <li>Assistant output supports Markdown/GFM presentation, while the backend owns content scope and redaction.</li>
+  <li>The Vendor Master supports search, status/category filters, sorting, pagination, full-record retrieval, links back to onboarding evidence, and CSV export of the filtered result set.</li>
 </ul>
 
 <h1 id="backend">6. Backend and API architecture</h1>
@@ -304,7 +325,7 @@ Reviewer inspects originals, sources, mismatches, checks and assistant answers
   <tr><td>Contracts</td><td><code>backend/app/schemas.py</code></td><td>Pydantic input/output models and validation.</td></tr>
   <tr><td>Persistence</td><td><code>database.py</code>, <code>models.py</code>, <code>alembic/</code></td><td>Sessions, ORM entities, and ordered schema evolution.</td></tr>
   <tr><td>HTTP routers</td><td><code>backend/app/routers/</code></td><td>Portal, suppliers, documents, AI, review, ERP, admin, assistant, and health endpoints.</td></tr>
-  <tr><td>Domain services</td><td><code>backend/app/services/</code></td><td>Authentication, documents, processing, compliance, retrieval, policy, ERP, tracing.</td></tr>
+  <tr><td>Domain services</td><td><code>backend/app/services/</code></td><td>Authentication, documents, staged upload validation, processing, compliance, retrieval, policy, ERP, tracing.</td></tr>
   <tr><td>Policy/prompts</td><td><code>backend/policy/</code>, <code>backend/app/prompts/</code></td><td>Versioned rules and model instructions kept outside route logic.</td></tr>
 </table>
 
@@ -313,13 +334,13 @@ Reviewer inspects originals, sources, mismatches, checks and assistant answers
   <tr><th>Area</th><th>Representative endpoints</th><th>Access</th></tr>
   <tr><td>Health/operations</td><td><code>GET /api/health</code>, <code>GET /metrics/</code>, <code>GET /docs</code></td><td>Public in current demo</td></tr>
   <tr><td>Authentication</td><td><code>POST /api/portal/auth/register</code>, <code>/login</code>, <code>/reviewer[-demo]</code>, <code>/admin[-demo]</code>; <code>GET /session</code>; <code>POST /logout</code></td><td>Entry public; session/logout authenticated</td></tr>
-  <tr><td>Supplier portal</td><td><code>GET/PATCH /api/portal/application</code>; <code>POST /submit</code>, <code>/resubmit</code>; document upload/delete/retry/content/history; assistant/history</td><td>Supplier</td></tr>
+  <tr><td>Supplier portal</td><td><code>GET/PATCH /api/portal/application</code>; <code>POST /submit</code>, <code>/resubmit</code>; staged document upload/delete/retry/content/history; extracted-value preview; assistant/history</td><td>Supplier</td></tr>
   <tr><td>Policy catalogue</td><td><code>GET /api/portal/policy</code></td><td>Public</td></tr>
   <tr><td>Reviewer case list/detail</td><td><code>POST/GET /api/suppliers</code>; <code>GET /api/suppliers/{id}</code></td><td>Reviewer</td></tr>
   <tr><td>Reviewer documents</td><td>Upload/delete/retry/content/history under <code>/api/suppliers/{id}/documents</code></td><td>Reviewer</td></tr>
   <tr><td>AI/RAG</td><td><code>POST /api/suppliers/{id}/process</code>; per-document process; <code>/questions</code>; reviewer assistant/history</td><td>Reviewer</td></tr>
-  <tr><td>Review/compliance</td><td>Field correction/review, document review, compliance get/run, approve/reject</td><td>Reviewer</td></tr>
-  <tr><td>ERP</td><td>Per-case validate/record under supplier routes; <code>GET /api/mock-erp/records</code></td><td>Reviewer</td></tr>
+  <tr><td>Review/compliance</td><td>Field correction/review, document review, <code>POST /requirements/confirm-ready</code>, <code>POST /documents/{id}/flag-reason-draft</code>, compliance get/run, approve/reject</td><td>Reviewer</td></tr>
+  <tr><td>ERP</td><td>Per-case validate/record under supplier routes; <code>GET /api/mock-erp/records</code> for the Vendor Master</td><td>Reviewer</td></tr>
   <tr><td>Administrator</td><td><code>GET /api/admin/profiles</code>, <code>/observability</code>; reset-password; delete profile</td><td>Administrator</td></tr>
   <tr><td>General assistant</td><td><code>POST /api/assistant/chat</code></td><td>Public, onboarding scope only</td></tr>
 </table>
@@ -356,17 +377,17 @@ Reviewer inspects originals, sources, mismatches, checks and assistant answers
 <h2>7.3 Entity catalogue</h2>
 <table class="small">
   <tr><th>Entity</th><th>Purpose and notable fields</th></tr>
-  <tr><td><code>Supplier</code></td><td>Case header, portal values, category, submission snapshot/status, decision, and ERP linkage.</td></tr>
+  <tr><td><code>Supplier</code></td><td>Case header, portal values, category, submission snapshot/status, decision, portal-derived reference, final 10-digit Vendor ID, ERP record ID, and ERP payload.</td></tr>
   <tr><td><code>PortalAccount</code></td><td>Unique supplier email and scrypt password hash.</td></tr>
   <tr><td><code>PortalSession</code></td><td>SHA-256 token hash, role, optional account, seven-day expiry.</td></tr>
-  <tr><td><code>Document</code></td><td>One active file per supplier/document type, filename/path/type/size/hash/revision, text/OCR metadata, AI and reviewer states.</td></tr>
+  <tr><td><code>Document</code></td><td>One active file per supplier/document type, filename/path/type/size/hash/revision, text/OCR metadata, OCR quality score/status/details, upload-validation status/details, and AI/reviewer states.</td></tr>
   <tr><td><code>DocumentRevision</code></td><td>Immutable metadata for archived originals superseded by replacement.</td></tr>
   <tr><td><code>ExtractedField</code></td><td>Per-document field/value/page/confidence plus reviewer state and provenance.</td></tr>
   <tr><td><code>AiRun</code></td><td>Operation, status, model, prompt, tokens, latency, retrieval count, safe error and details.</td></tr>
   <tr><td><code>ComplianceResult</code></td><td>Unique current result per supplier/rule with status, message, evidence, and timestamp.</td></tr>
   <tr><td><code>AuditEvent</code></td><td>Append-style action record with entity identifiers and structured details.</td></tr>
   <tr><td><code>AssistantMessage</code></td><td>Supplier/reviewer audience, ordered conversation role/content/citations.</td></tr>
-  <tr><td><code>ErpSupplierRecord</code></td><td>Mock downstream master with unique ERP ID and idempotency key.</td></tr>
+  <tr><td><code>ErpSupplierRecord</code></td><td>Mock downstream master with a stable 10-digit Vendor ID, derived <code>ERP-REC-…</code> record ID, source supplier ID, complete payload, and idempotency key.</td></tr>
   <tr><td><code>ErpToolAttempt</code></td><td>Sanitized integration attempt, operation/status/latency/attempt/error and summaries.</td></tr>
 </table>
 
@@ -381,11 +402,15 @@ Reviewer inspects originals, sources, mismatches, checks and assistant answers
 
 <h1 id="documents">8. Document ingestion, OCR, and revisions</h1>
 
-<h2>8.1 Upload controls</h2>
+<h2>8.1 Staged upload controls</h2>
 <ul>
   <li>Allowed MIME types: PDF, PNG, JPEG, and plain text.</li>
   <li>Default maximum: 10 MB, enforced by reading at most the limit plus one byte.</li>
   <li>One active file per supplier and required document type, enforced in the API and database.</li>
+  <li>Bytes are first written under <code>.staging/&lt;supplier UUID&gt;</code>. Text/OCR extraction and configured validation complete before the file is moved to permanent UUID-named storage.</li>
+  <li>With <code>UPLOAD_AI_VALIDATION_ENABLED=true</code>, the service checks detected document type, required extracted fields, and conservative comparisons of legal name, tax reference, bank account, and IFSC against portal values.</li>
+  <li>Wrong-type, missing-field, confident identity-mismatch, unreadable, and poor-quality files return actionable errors, record a sanitized rejection audit, and are deleted from staging. An AI outage returns 503 and does not save the file.</li>
+  <li>When AI validation is disabled for offline development, readability and OCR-quality gates still apply, but the stored validation state is <code>text_only</code>; document-type, field, and identity checks are not performed.</li>
   <li>Original name is reduced to a basename and retained as metadata; the stored name is a generated UUID plus an allowed extension.</li>
   <li>Each file receives a SHA-256 digest. Content access recalculates the digest and fails closed on mismatch.</li>
   <li>Resolved paths must remain under the configured upload root.</li>
@@ -401,10 +426,20 @@ Reviewer inspects originals, sources, mismatches, checks and assistant answers
   └─ store [Page N] marker + chosen text
 
 Result method = native | mixed | ocr
-Result metadata = page count + OCR page numbers + language + warnings</pre></div>
+Result metadata = page count + OCR page numbers + language + warnings + page quality metrics</pre></div>
 <p class="caption">Figure 4. Page-selective extraction. Images are treated as one-page visual documents.</p>
 
-<h2>8.3 OCR defaults</h2>
+<h2>8.3 OCR reliability and human review</h2>
+<p>For OCR-derived evidence, VendorLens calculates an extraction-reliability score from visual clarity (45%), average extracted-field confidence (40%), and required-field coverage (15%). This is explicitly an extraction signal, not an authenticity or fraud score.</p>
+<table>
+  <tr><th>Score band</th><th>Stored status</th><th>Journey behavior</th></tr>
+  <tr><td>0–34</td><td><code>poor</code></td><td>Reject before permanent storage and ask for a sharper, complete, well-lit image.</td></tr>
+  <tr><td>35–69</td><td><code>review</code></td><td>Accept with every affected value marked for manual attention; supplier sees a read-only preview and the item is excluded from bulk confirmation.</td></tr>
+  <tr><td>70–100</td><td><code>good</code></td><td>Accept without an OCR-quality warning; normal reviewer comparison and compliance gates still apply.</td></tr>
+</table>
+<p>The visual component caps the combined result in its own band, preventing high model confidence from masking a poor or uncertain source image. Reviewers see OCR-derived pages, reliability, extraction confidence, and the original side by side; an audited correction records the previous value, corrected value, source page, previous confidence, and reviewer.</p>
+
+<h2>8.4 OCR defaults</h2>
 <table>
   <tr><th>Setting</th><th>Default</th><th>Purpose</th></tr>
   <tr><td><code>OCR_ENABLED</code></td><td>true</td><td>Enable local OCR fallback.</td></tr>
@@ -413,13 +448,15 @@ Result metadata = page count + OCR page numbers + language + warnings</pre></div
   <tr><td>Native text thresholds</td><td>30 alphanumeric characters; 5 words</td><td>Decide whether native text is usable.</td></tr>
   <tr><td>Image coverage threshold</td><td>0.5</td><td>Detect image-dominant pages even when some native text exists.</td></tr>
   <tr><td><code>OCR_MAX_PAGES</code></td><td>30</td><td>Bound local processing and encourage smaller evidence files.</td></tr>
+  <tr><td><code>OCR_QUALITY_REJECT_THRESHOLD</code></td><td>35</td><td>Reject OCR evidence below the reliable-ingestion floor.</td></tr>
+  <tr><td><code>OCR_QUALITY_REVIEW_THRESHOLD</code></td><td>70</td><td>Route accepted OCR evidence below this value to explicit human attention.</td></tr>
 </table>
 
-<h2>8.4 Failure and retry</h2>
-<p>An unreadable upload is retained with <code>processing_status=failed</code> and a safe error message. Supplier and reviewer retry endpoints rerun text extraction after environment or file issues are resolved. AI extraction and index states are independent, allowing a reviewer to see whether failure occurred at text extraction, structured extraction, or vector indexing.</p>
+<h2>8.5 Failure and retry</h2>
+<p>A new unreadable or validation-failed upload is not retained as active evidence: its temporary bytes are removed and the supplier receives a safe, specific error. Retry endpoints remain available for previously persisted or operationally failed documents after environment/file issues are resolved. Upload validation, text extraction, structured extraction, and index states remain independent so operators can locate the failed stage.</p>
 
-<h2>8.5 Revision model</h2>
-<p>Before an active document is deleted/replaced, its immutable metadata is inserted into <code>document_revisions</code>. Revision numbers increase per supplier/document type. Authenticated supplier or reviewer endpoints can list history and open an active or archived original. Viewing is audited and responses use <code>Cache-Control: private, no-store</code> and <code>X-Content-Type-Options: nosniff</code>.</p>
+<h2>8.6 Revision model</h2>
+<p>Before an active document is deleted or successfully replaced, its immutable metadata is inserted into <code>document_revisions</code>. A rejected replacement leaves the current active evidence untouched. Revision numbers increase per supplier/document type. Authenticated supplier or reviewer endpoints can list history and open an active or archived original. Viewing is audited and responses use <code>Cache-Control: private, no-store</code> and <code>X-Content-Type-Options: nosniff</code>.</p>
 
 <h1 id="ai-rag">9. AI processing and retrieval-augmented generation</h1>
 
@@ -471,6 +508,7 @@ Redacted page text
   <tr><th>Assistant</th><th>Grounding</th><th>Important behavior</th></tr>
   <tr><td>Public/supplier onboarding assistant</td><td>Retrieved synthetic policy excerpts; signed-in supplier context when available.</td><td>Scope check rejects unrelated topics; hides internal policy IDs; distinguishes upload completeness from correctness; avoids sensitive values.</td></tr>
   <tr><td>Reviewer case assistant</td><td>Case state, portal-entered values, extracted values and source pages, checks, reviewer feedback, policy and document excerpts.</td><td>Labels each origin, exposes mismatches rather than choosing silently, cites only direct document evidence, never approves/rejects.</td></tr>
+  <tr><td>Reviewer flag-reason draft</td><td>Calculated non-pass findings plus retrieved policy context.</td><td>Produces an editable, supplier-facing correction request; rejects sensitive-value leakage and falls back to a deterministic grounded draft when AI is unavailable.</td></tr>
 </table>
 <p>Signed-in supplier and reviewer histories are persisted separately by audience with ordered sequences. Conversations are bounded by message count/characters and can be cleared.</p>
 
@@ -519,6 +557,8 @@ Approval predicate: at least one result AND every result == PASS</pre></div>
   <li>Reviewers can verify or dispute selected fields; disputes require a reason.</li>
   <li>Reviewers can correct a value and page reference. A correction receives confidence 1.0 and audited reviewer identity.</li>
   <li>Reviewers verify or dispute an entire evidence document. Verifying the document verifies its non-corrected extracted fields.</li>
+  <li>The <em>Confirm all</em> action verifies only pending requirements whose documents and AI extraction are ready, indexing has not failed, and every policy check is matched or already human-verified. Manual-attention/OCR, disputed, failed, and already reviewed items are excluded and the batch is audited.</li>
+  <li>A reviewer may request a flag-reason draft grounded in current findings and policy RAG, but must review or edit and explicitly save the reason.</li>
   <li>Any field or evidence change recalculates current compliance results.</li>
   <li>A reviewer still provides an explicit approval or rejection action after compliance is ready.</li>
 </ul>
@@ -530,13 +570,13 @@ Approval predicate: at least one result AND every result == PASS</pre></div>
 <table>
   <tr><th>Tool</th><th>Purpose</th></tr>
   <tr><td><code>validate_supplier_record</code></td><td>Required master fields, India scope, category mapping, IFSC length, duplicate tax/bank checks, optional-field warnings, idempotent replay detection.</td></tr>
-  <tr><td><code>create_supplier_record</code></td><td>Validate and insert an active supplier master with a deterministic <code>ERP-…</code> identifier.</td></tr>
-  <tr><td><code>get_supplier_record</code></td><td>Retrieve the created record by ERP supplier ID.</td></tr>
-  <tr><td><code>list_supplier_records</code></td><td>List downstream records for the reviewer ERP view.</td></tr>
+  <tr><td><code>create_supplier_record</code></td><td>Validate and insert an active supplier master with a stable 10-digit Vendor ID and distinct <code>ERP-REC-…</code> record ID.</td></tr>
+  <tr><td><code>get_supplier_record</code></td><td>Retrieve the created record by Vendor ID.</td></tr>
+  <tr><td><code>list_supplier_records</code></td><td>List downstream records for the reviewer Vendor Master.</td></tr>
 </table>
 
 <h2>11.2 Mapping and provenance</h2>
-<p>The ERP preview prefers reviewed/corrected evidence for supported fields, falling back to supplier-entered values, and labels each source as system-generated, supplier-entered, reviewed evidence, or unavailable. The supplier reference is generated from the case UUID. Category/subcategory remain supplier selections. The stored case retains the final ERP payload and returned ERP ID.</p>
+<p>The ERP preview prefers reviewed/corrected evidence for supported fields, falling back to supplier-entered values, and labels each source as system-generated, supplier-entered, reviewed evidence, or unavailable. Category/subcategory remain supplier selections. Three identifiers are deliberately separate: the <strong>portal reference</strong> (<code>SUP-…</code>) identifies the onboarding case, the <strong>ERP record ID</strong> (<code>ERP-REC-…</code>) identifies the downstream creation record, and the stable 10-digit <strong>Vendor ID</strong> is the primary business identifier in the Vendor Master. The stored case retains the final ERP payload and both returned ERP identifiers.</p>
 
 <h2>11.3 Approval and retry semantics</h2>
 <div class="diagram"><pre>Reviewer clicks Approve
@@ -545,7 +585,7 @@ Approval predicate: at least one result AND every result == PASS</pre></div>
       ├─ build ERP preview with source map
       ├─ validate_supplier_record
       ├─ create_supplier_record (idempotency key = supplier case ID)
-      ├─ persist ERP link + sanitized tool audit
+      ├─ persist ERP record ID + Vendor ID + sanitized tool audit
       └─ set supplier APPROVED and record reviewer decision
 
 ERP unavailable / validation error → approval remains incomplete → safe retry</pre></div>
@@ -553,6 +593,9 @@ ERP unavailable / validation error → approval remains incomplete → safe retr
 
 <h2>11.4 Audit and privacy</h2>
 <p>Every tool attempt records operation, attempt number, status, latency, safe error code, requested field names, and limited response facts. Raw tax and bank values are deliberately excluded from the integration attempt summaries. Langfuse receives tool outcome metadata when configured.</p>
+
+<h2>11.5 Vendor Master journey</h2>
+<p>Approved ERP records appear in the reviewer-only <code>/review/vendor-master</code> workspace. The SAP-style table is read-only and supports identifier/name search, status and category filters, sorting, pagination, full ERP record retrieval, and a link back to the onboarding case and evidence trail. CSV export includes the currently filtered rows and escapes spreadsheet-formula prefixes in supplier-provided values. Master-data changes remain the responsibility of the downstream ERP rather than VendorLens.</p>
 
 <h1 id="security">12. Security, privacy, and audit controls</h1>
 
@@ -562,13 +605,14 @@ ERP unavailable / validation error → approval remains incomplete → safe retr
   <tr><td>Authentication</td><td>Supplier passwords use scrypt with random 16-byte salts; bearer tokens are random, only SHA-256 hashes are stored, and sessions expire after seven days.</td></tr>
   <tr><td>Authorization</td><td>FastAPI dependencies enforce supplier, reviewer, and administrator roles; supplier application lookup binds the account to its case.</td></tr>
   <tr><td>Secrets</td><td>Provider and staff credentials are environment-backed <code>SecretStr</code> values; the real <code>.env</code> is ignored by Git.</td></tr>
-  <tr><td>Input/file controls</td><td>Pydantic validation, content-type allow-list, size cap, one active type, UUID storage names, basename-only original names, path-root enforcement.</td></tr>
+  <tr><td>Input/file controls</td><td>Pydantic validation, content-type allow-list, size cap, temporary staging, readability/type/field/identity/quality gates, one active type, UUID storage names, basename-only original names, and path-root enforcement.</td></tr>
   <tr><td>Integrity</td><td>SHA-256 digest is persisted at upload and verified before original-file delivery.</td></tr>
   <tr><td>AI privacy boundary</td><td>Deterministic typed-placeholder redaction runs before external model and embedding calls.</td></tr>
   <tr><td>Retrieval isolation</td><td>Every Chroma query includes a supplier filter before ranking.</td></tr>
   <tr><td>Telemetry privacy</td><td>Supplier IDs are hashed; filenames/content are excluded by default; content capture defaults off.</td></tr>
   <tr><td>Auditability</td><td>Uploads, viewing, extraction, processing, review, compliance, decisions, and ERP operations produce persistent events/runs.</td></tr>
   <tr><td>Browser response</td><td>Original evidence uses private/no-store cache control and <code>nosniff</code>.</td></tr>
+  <tr><td>Spreadsheet export</td><td>Vendor Master CSV quotes every cell and prefixes formula-leading characters to prevent spreadsheet formula injection.</td></tr>
 </table>
 
 <h2>12.2 PII redaction scope</h2>
@@ -594,10 +638,10 @@ ERP unavailable / validation error → approval remains incomplete → safe retr
 </ul>
 
 <h2>13.2 Administrator observability</h2>
-<p>The admin API aggregates a configurable time window of provider/model/prompt usage, successes/failures/in-progress runs, tokens, average and P95 latency, question grounding/not-found behavior, retrieval counts, native/OCR document counts, OCR pages, extraction failures, ERP attempts/failures/latency, and recent runs. It exposes a configured Langfuse dashboard link without disclosing credentials.</p>
+<p>The admin API aggregates a configurable time window of provider/model/prompt usage, successes/failures/in-progress runs, tokens, average and P95 latency, question grounding/not-found behavior, retrieval counts, native/OCR document counts, OCR pages, extraction failures, ERP attempts/failures/latency, and recent runs. When configured, read-only Langfuse summaries add trace and observation counts, model cost, and named numeric quality/grounding scores without retrieving captured prompt or output content; the dashboard link is exposed without credentials.</p>
 
 <h2>13.3 Langfuse tracing</h2>
-<p>Tracing is optional and failure-tolerant. Workflow families cover document extraction, supplier document processing/RAG, supplier/reviewer assistants, and ERP MCP calls. Content capture defaults false; operational metadata, model, prompt version, token usage, latencies, scores, release, and a non-reversible supplier subject label support debugging and cost analysis. Telemetry exceptions do not change application behavior.</p>
+<p>Tracing is optional and failure-tolerant. Workflow families cover staged upload validation, document extraction, supplier document processing/RAG, supplier/reviewer assistants, reviewer flag-reason drafting, and ERP MCP calls. Content capture defaults false; operational metadata, model, prompt version, token usage, latencies, validation/quality outcomes, release, and a non-reversible supplier subject label support debugging and cost analysis. Telemetry exceptions do not change application behavior.</p>
 
 <h2>13.4 Evaluation assets</h2>
 <p>The repository contains generated evaluation documents, ground truth, and scripts for repeatable extraction/Q&amp;A checks, plus a Promptfoo runbook. Historical project notes report a v3 evaluation of 36/36 field checks and 24/24 Q&amp;A checks with complete citation, not-found, and supplier-isolation accuracy. Those figures are historical evidence rather than a result rerun during this documentation pass; they should be regenerated against any release candidate.</p>
@@ -631,7 +675,8 @@ Host :8000 ───────────────────────
   <tr><td>OpenRouter</td><td>API key, base URL, extraction/answer/embedding models, optional attribution headers</td><td>Takes priority when the key is set.</td></tr>
   <tr><td>Azure OpenAI</td><td>API key, endpoint, API version, deployment names</td><td>Used only when OpenRouter is not configured.</td></tr>
   <tr><td>RAG</td><td>chunk 500, overlap 75, top K 4, max distance 0.72</td><td>Changing embedding vector dimensions requires index recreation and reprocessing.</td></tr>
-  <tr><td>OCR</td><td>enabled, language, DPI, native thresholds, image coverage, page cap</td><td>Defaults reside in typed backend settings.</td></tr>
+  <tr><td>Upload validation</td><td><code>UPLOAD_AI_VALIDATION_ENABLED</code></td><td>Defaults true and requires a configured provider; false is intended only for offline development and retains readability/OCR-quality gates.</td></tr>
+  <tr><td>OCR</td><td>enabled, language, DPI, native thresholds, image coverage, page cap, reject threshold 35, review threshold 70</td><td>Defaults reside in typed backend settings; reliability measures extraction, not authenticity.</td></tr>
   <tr><td>ERP</td><td><code>MOCK_ERP_MCP_URL</code>, timeout</td><td>Compose routes to the internal service; empty uses in-process implementation.</td></tr>
   <tr><td>Langfuse</td><td>enabled, keys, URL, dashboard URL, release, content capture</td><td>Optional; content capture should remain false unless explicitly approved.</td></tr>
 </table>
@@ -647,17 +692,17 @@ Host :8000 ───────────────────────
 <h1 id="testing">15. Testing and verification</h1>
 
 <h2>15.1 Automated test inventory</h2>
-<p>The backend contains 79 test functions across 18 modules. Coverage areas include:</p>
+<p>The backend contains 92 test functions across 21 modules. Coverage areas include:</p>
 <table>
   <tr><th>Area</th><th>Representative verification</th></tr>
   <tr><td>Authentication/roles</td><td>Supplier portal journeys and staff access boundaries.</td></tr>
-  <tr><td>Documents/OCR</td><td>Uploads, extraction errors, lifecycle, content access, and scanned-document journey.</td></tr>
+  <tr><td>Documents/OCR</td><td>Temporary staging and cleanup, upload rejection/promotion, type/field/identity validation, OCR quality bands and preview, extraction errors, lifecycle, content access, and scanned-document journey.</td></tr>
   <tr><td>AI provider</td><td>Provider selection and configuration behavior.</td></tr>
   <tr><td>Extraction quality</td><td>Null normalization, consolidation, conflicts, resilient per-document processing.</td></tr>
   <tr><td>RAG</td><td>Chunking, redaction, retrieval, citations, not-found and supplier isolation.</td></tr>
   <tr><td>Assistants</td><td>Scope control, supplier answers, persistent reviewer case assistant.</td></tr>
-  <tr><td>Policy/compliance</td><td>Catalogue integrity, objective evaluators, review gates, approval readiness.</td></tr>
-  <tr><td>ERP</td><td>MCP tool behavior, validation, idempotency, creation and retrieval.</td></tr>
+  <tr><td>Policy/compliance</td><td>Catalogue integrity, objective evaluators, review gates, conservative bulk confirmation, flag-reason fallback, and approval readiness.</td></tr>
+  <tr><td>ERP</td><td>MCP tool behavior, validation, idempotency, identifier separation, creation and retrieval.</td></tr>
   <tr><td>Operations</td><td>Metrics and privacy-safe tracing behavior.</td></tr>
 </table>
 
@@ -669,9 +714,9 @@ Host :8000 ───────────────────────
   <li>Apply Alembic migrations to a clean database and verify current head.</li>
   <li>Run the full backend suite and frontend lint/build.</li>
   <li>Start all Compose services and verify health endpoints.</li>
-  <li>Run a representative native, scanned, and mixed PDF journey.</li>
+  <li>Run representative native, scanned, mixed, wrong-type, identity-mismatch, poor-quality, and manual-review-band upload journeys.</li>
   <li>Run the quality corpus/Promptfoo checks for extraction, grounded answers, citations, not-found behavior, and isolation.</li>
-  <li>Verify supplier correction/resubmission, evidence review, all-pass approval, ERP idempotent retry, and downstream retrieval.</li>
+  <li>Verify supplier correction/resubmission, OCR correction audit, safe bulk-confirm exclusions, AI/fallback flag-reason drafting, all-pass approval, ERP idempotent retry, separate identifiers, Vendor Master filtering, and safe CSV export.</li>
   <li>Inspect Prometheus and Langfuse results for the candidate release.</li>
 </ol>
 
@@ -682,7 +727,7 @@ Host :8000 ───────────────────────
   <li>Synthetic India-only policy, one primary subcategory, and mock downstream integration.</li>
   <li>Background AI work runs in the API process, without a durable job queue, distributed lock, or worker autoscaling.</li>
   <li>Local filesystem and embedded Chroma persistence assume a single shared runtime volume.</li>
-  <li>Regex PII redaction and OCR accuracy are document-dependent.</li>
+  <li>Regex PII redaction and OCR accuracy are document-dependent; the reliability score reduces ingestion risk but is not an authenticity control.</li>
   <li>Provider/model outputs remain probabilistic even with schemas and prompts; human verification is essential.</li>
   <li>Demo-mode staff access, browser local-storage tokens, public docs/metrics, and HTTP are not production controls.</li>
   <li>There is no declared browser end-to-end, load, penetration, accessibility, or disaster-recovery test suite.</li>
@@ -737,8 +782,9 @@ Host :8000 ───────────────────────
   <li>Check Compose health and backend logs.</li>
   <li>Call <code>/api/health</code> to isolate PostgreSQL/Chroma connectivity.</li>
   <li>Use admin observability to locate failed AI runs, models/prompts, OCR failures, and ERP attempts.</li>
-  <li>Inspect the supplier’s document status, AI extraction/index status, last run and audit events.</li>
-  <li>For OCR failures, verify Tesseract and the configured language pack, then retry text extraction.</li>
+  <li>Inspect the supplier’s upload-validation status, OCR reliability/details, document review state, AI extraction/index status, last run, and audit events.</li>
+  <li>For an upload rejection, use its safe issue code/message to distinguish unreadability, wrong type, missing expected fields, identity mismatch, low OCR quality, and provider unavailability; rejected temporary files are not recoverable case evidence.</li>
+  <li>For OCR failures, verify Tesseract and the configured language pack, then retry eligible persisted text extraction or ask the supplier for a clearer source.</li>
   <li>For AI configuration changes, restart the backend because the settings/client are cached.</li>
   <li>For ERP failure, fix connectivity/validation and retry approval; the idempotency key makes the create safe.</li>
 </ol>
@@ -758,7 +804,7 @@ Host :8000 ───────────────────────
   <tr><td>Domain services</td><td><code>backend/app/services/</code></td></tr>
   <tr><td>AI instructions</td><td><code>backend/app/prompts/</code></td></tr>
   <tr><td>Policy</td><td><code>backend/policy/requirements.json</code>, <code>backend/policy/source/</code>, <code>backend/policy/README.md</code></td></tr>
-  <tr><td>Database history</td><td><code>backend/alembic/versions/0001…0014</code></td></tr>
+  <tr><td>Database history</td><td><code>backend/alembic/versions/0001…0017</code></td></tr>
   <tr><td>Frontend</td><td><code>frontend/src/App.tsx</code>, <code>auth/</code>, <code>api/</code>, <code>pages/</code>, <code>components/</code></td></tr>
   <tr><td>Tests/evaluation</td><td><code>backend/tests/</code>, <code>scripts/run_quality_evaluation.py</code>, <code>QUALITY_EVALUATION.md</code></td></tr>
 </table>
@@ -772,6 +818,10 @@ Host :8000 ───────────────────────
   <tr><td>Compliance result</td><td>A current rule/check status of pass, fail, or needs review, with evidence.</td></tr>
   <tr><td>MCP</td><td>Model Context Protocol-style named-tool boundary; here used as explicit JSON-RPC integration with a mock ERP, not model-directed execution.</td></tr>
   <tr><td>OCR</td><td>Optical character recognition performed locally by Tesseract for scanned/image-dominant pages.</td></tr>
+  <tr><td>OCR reliability</td><td>A 0–100 estimate of extraction reliability from visual quality, field confidence, and required-field coverage; not a document-authenticity score.</td></tr>
+  <tr><td>Portal reference</td><td>A stable <code>SUP-…</code> display identifier derived from the onboarding case UUID.</td></tr>
+  <tr><td>ERP record ID</td><td>A distinct <code>ERP-REC-…</code> identifier for the downstream creation record.</td></tr>
+  <tr><td>Vendor ID</td><td>The stable 10-digit business identifier returned by the mock ERP and used as the Vendor Master primary identifier.</td></tr>
   <tr><td>RAG</td><td>Retrieval-augmented generation: answer generation constrained by retrieved supplier or policy evidence.</td></tr>
   <tr><td>Requirements snapshot</td><td>The resolved checklist frozen on first submission for future auditability.</td></tr>
   <tr><td>Typed placeholder</td><td>A redacted marker such as <code>[PAN_1]</code> that preserves value type and document-local consistency without sending the original value.</td></tr>
@@ -779,6 +829,6 @@ Host :8000 ───────────────────────
 
 <div class="success"><strong>Technical conclusion.</strong> VendorLens demonstrates a coherent human-in-the-loop onboarding architecture: evidence is ingested with provenance, AI output is bounded and reviewable, policy checks remain explicit, downstream creation is deterministic and idempotent, and operational evidence is retained. Its architecture is suitable for a capstone demonstration and a strong prototype foundation, provided the production-readiness controls in Section 16 are treated as prerequisites for real supplier data.</div>
 
-<p class="footer-note">VendorLens AI — Project Technical Document · Version 1.0 · Baseline f54fc07 · Prepared 28 September 2026</p>
+<p class="footer-note">VendorLens AI — Project Technical Document · Version 1.1 · Baseline c2a23e4 · Prepared 5 October 2026</p>
 </body>
 </html>
