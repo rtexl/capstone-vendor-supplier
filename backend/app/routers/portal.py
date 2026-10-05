@@ -13,10 +13,10 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.database import SessionLocal, get_db
-from app.models import AuditEvent, Document, DocumentType, PortalAccount, PortalSession, ProcessingStatus, Supplier, SupplierStatus
-from app.routers.documents import delete_document, document_history, original_file_response, retry_text_extraction, upload_document
+from app.models import AuditEvent, Document, DocumentType, ExtractedField, PortalAccount, PortalSession, ProcessingStatus, Supplier, SupplierStatus
+from app.routers.documents import delete_document, document_history, ingest_document, original_file_response, retry_text_extraction
 from app.schemas import (
-    AssistantHistoryMessage, DocumentRead, DocumentRevisionRead, GeneralAssistantMessage, GeneralAssistantRequest,
+    AssistantHistoryMessage, DocumentRead, DocumentRevisionRead, ExtractedFieldRead, GeneralAssistantMessage, GeneralAssistantRequest,
     GeneralAssistantResponse, GeneralAssistantRun,
 )
 from app.routers.assistant import answer_chat
@@ -30,6 +30,7 @@ from app.services.policy_retrieval import application_answer_for, application_co
 from app.services.retrieval import get_chunk_collection
 from app.services.compliance import evaluate_compliance, persist_compliance_results
 from app.services.assistant_history import clear_history, conversation_history, save_exchange
+from app.services.tracing import telemetry_subject_id
 
 router = APIRouter(prefix="/portal", tags=["portal"])
 
@@ -74,6 +75,7 @@ class ApplicationRead(BaseModel):
     submitted_at: datetime | None
     status: SupplierStatus
     documents: list[DocumentRead]
+    extracted_fields: list[ExtractedFieldRead]
     requirements: Checklist
 
 
@@ -86,6 +88,9 @@ def get_application(db: Session, session: PortalSession) -> Supplier:
 
 def application_response(db: Session, supplier: Supplier) -> ApplicationRead:
     documents = db.scalars(select(Document).where(Document.supplier_id == supplier.id).order_by(Document.created_at.desc())).all()
+    extracted_fields = db.scalars(select(ExtractedField).where(
+        ExtractedField.supplier_id == supplier.id,
+    ).order_by(ExtractedField.document_id, ExtractedField.field_name)).all()
     return ApplicationRead(
         id=supplier.id, category=supplier.category, subcategory=supplier.subcategory,
         name=supplier.name, country=supplier.country, contact_email=supplier.contact_email,
@@ -93,6 +98,7 @@ def application_response(db: Session, supplier: Supplier) -> ApplicationRead:
         bank_ifsc=supplier.bank_ifsc,
         submitted_at=supplier.submitted_at, status=supplier.status,
         documents=[DocumentRead.model_validate(item) for item in documents],
+        extracted_fields=[ExtractedFieldRead.model_validate(item) for item in extracted_fields],
         requirements=checklist_for(supplier),
     )
 
@@ -124,7 +130,12 @@ def process_submitted_application(supplier_id: uuid.UUID, settings: Settings) ->
         except Exception:
             # Processing records its safe failure state for the reviewer. Submission
             # remains valid and must never be rolled back by an AI/provider failure.
-            pass
+            db.rollback()
+            supplier = db.get(Supplier, supplier_id)
+            if supplier is not None and supplier.status == SupplierStatus.PROCESSING:
+                supplier.status = SupplierStatus.NEEDS_REVIEW
+                supplier.decision_reason = "Automated processing could not start. A reviewer can retry it safely."
+                db.commit()
 
 
 @router.post("/auth/register", response_model=SessionResponse, status_code=201)
@@ -282,11 +293,7 @@ def application_assistant(
             persisted_payload,
             settings,
             application_context_for(supplier),
-            {
-                "supplier_reference": f"SUP-{supplier.id.hex[:8].upper()}",
-                "category": supplier.category or "unselected",
-                "subcategory": supplier.subcategory or "unselected",
-            },
+            telemetry_subject=telemetry_subject_id(supplier.id),
         )
     save_exchange(db, supplier.id, "supplier", question, response.answer)
     return response
@@ -365,7 +372,7 @@ def resubmit_application(
             document.review_comment = None
             document.reviewed_by = None
             document.reviewed_at = None
-    supplier.status = SupplierStatus.NEEDS_REVIEW
+    supplier.status = SupplierStatus.PROCESSING if settings.ai_configured else SupplierStatus.NEEDS_REVIEW
     supplier.submitted_at = datetime.now(timezone.utc)
     supplier.decision_reason = None
     db.add(AuditEvent(
@@ -414,7 +421,7 @@ def submit_application(
     if supplier.submitted_at is None:
         supplier.requirements_snapshot = checklist_for(supplier).model_dump(mode="json")
         supplier.submitted_at = datetime.now(timezone.utc)
-        supplier.status = SupplierStatus.NEEDS_REVIEW
+        supplier.status = SupplierStatus.PROCESSING if settings.ai_configured else SupplierStatus.NEEDS_REVIEW
         db.commit()
         db.refresh(supplier)
         if settings.ai_configured:
@@ -434,16 +441,21 @@ async def upload_application_document(
         raise HTTPException(status_code=409, detail="Complete your details before uploading, or this application is already submitted.")
     if document_type not in required_types_for(supplier):
         raise HTTPException(status_code=422, detail="This document type is not in your current checklist.")
+    existing = db.scalar(select(Document).where(
+        Document.supplier_id == supplier.id,
+        Document.document_type == document_type,
+    ))
     if supplier.submitted_at:
-        existing = db.scalar(select(Document).where(
-            Document.supplier_id == supplier.id,
-            Document.document_type == document_type,
-        ))
         if existing is not None and existing.review_status != "disputed":
             raise HTTPException(status_code=409, detail="Only evidence flagged by the reviewer can be replaced.")
-        if existing is not None:
-            delete_document(supplier.id, existing.id, db, settings)
-    document = await upload_document(supplier.id, document_type, file, db, settings)
+    document = await ingest_document(
+        supplier=supplier,
+        document_type=document_type,
+        file=file,
+        db=db,
+        settings=settings,
+        replacement=existing if supplier.submitted_at else None,
+    )
     if supplier.submitted_at:
         supplier = get_application(db, session)
         supplier.status = SupplierStatus.NEW

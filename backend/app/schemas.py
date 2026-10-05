@@ -37,6 +37,8 @@ class SupplierSummary(BaseModel):
     decision_reason: str | None
     decided_at: datetime | None
     erp_supplier_id: str | None
+    erp_record_id: str | None = None
+    vendor_id: str | None = None
     erp_payload: dict | None = None
     document_count: int = 0
 
@@ -59,10 +61,15 @@ class DocumentRead(BaseModel):
     ocr_pages: list[int] = Field(default_factory=list)
     ocr_language: str | None = None
     ocr_warnings: list[str] = Field(default_factory=list)
+    ocr_quality_score: float | None = None
+    ocr_quality_status: Literal["poor", "review", "good"] | None = None
+    ocr_quality_details: dict | None = None
     ai_extraction_status: Literal["pending", "processing", "ready", "failed"] = "pending"
     ai_extraction_error: str | None = None
     ai_index_status: Literal["pending", "processing", "ready", "failed"] = "pending"
     ai_index_error: str | None = None
+    upload_validation_status: Literal["pending", "text_only", "passed"] = "pending"
+    upload_validation_details: dict | None = None
     review_status: str = "pending"
     review_comment: str | None = None
     reviewed_by: str | None = None
@@ -173,6 +180,21 @@ class EvidenceReviewRequest(BaseModel):
     reviewer_name: str = Field(default="Demo reviewer", min_length=2, max_length=100)
 
 
+class ConfirmReadyRequirementsRequest(BaseModel):
+    reviewer_name: str = Field(default="Demo reviewer", min_length=2, max_length=100)
+
+
+class ConfirmReadyRequirementsResponse(BaseModel):
+    confirmed_count: int = Field(ge=1)
+    document_ids: list[uuid.UUID]
+
+
+class FlagReasonDraftRead(BaseModel):
+    reason: str
+    source: Literal["ai_rag", "deterministic_fallback"]
+    finding_count: int = Field(ge=0)
+
+
 class ComplianceRunResponse(BaseModel):
     results: list[ComplianceResultRead]
     approval_ready: bool
@@ -194,6 +216,8 @@ class DecisionResponse(BaseModel):
     status: SupplierStatus
     message: str
     erp_supplier_id: str | None
+    erp_record_id: str | None = None
+    vendor_id: str | None = None
     decided_at: datetime
 
 
@@ -202,11 +226,14 @@ class ErpValidationResponse(BaseModel):
     errors: list[dict]
     warnings: list[dict]
     existing_erp_supplier_id: str | None = None
+    existing_vendor_id: str | None = None
     idempotent_replay: bool = False
 
 
 class ErpRecordRead(BaseModel):
     erp_supplier_id: str
+    erp_record_id: str
+    vendor_id: str
     supplier_reference: str | None = None
     source_supplier_id: uuid.UUID
     legal_name: str

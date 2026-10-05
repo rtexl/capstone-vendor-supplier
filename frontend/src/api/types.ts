@@ -41,6 +41,8 @@ export interface SupplierSummary {
   decision_reason: string | null
   decided_at: string | null
   erp_supplier_id: string | null
+  erp_record_id: string | null
+  vendor_id: string | null
   erp_payload: Record<string, unknown> | null
   document_count: number
 }
@@ -76,6 +78,18 @@ export interface AdminMetricGroup {
   failures: number
 }
 
+export interface AdminLangfuseCostGroup {
+  model: string
+  cost_usd: number
+  observations: number
+}
+
+export interface AdminLangfuseScoreGroup {
+  name: string
+  average: number
+  count: number
+}
+
 export interface AdminObservability {
   generated_at: string
   window_days: number
@@ -88,6 +102,17 @@ export interface AdminObservability {
   langfuse_configured: boolean
   langfuse_content_capture: boolean
   langfuse_dashboard_url: string | null
+  langfuse_metrics_available: boolean
+  langfuse_trace_metrics_available: boolean
+  langfuse_usage_metrics_available: boolean
+  langfuse_score_metrics_available: boolean
+  langfuse_metrics_error: string | null
+  langfuse_trace_count: number
+  langfuse_observation_count: number
+  langfuse_score_count: number
+  langfuse_total_cost_usd: number
+  langfuse_cost_by_model: AdminLangfuseCostGroup[]
+  langfuse_scores: AdminLangfuseScoreGroup[]
   total_runs: number
   successful_runs: number
   failed_runs: number
@@ -106,9 +131,11 @@ export interface AdminObservability {
   ocr_assisted_documents: number
   failed_text_extractions: number
   ocr_pages: number
+  ocr_enabled: boolean
   erp_attempts: number
   erp_failures: number
   erp_average_latency_ms: number
+  erp_mode: string
   by_model: AdminMetricGroup[]
   by_operation: AdminMetricGroup[]
   by_prompt_version: AdminMetricGroup[]
@@ -140,6 +167,7 @@ export interface SupplierApplication {
   submitted_at: string | null
   status: SupplierStatus
   documents: SupplierDocument[]
+  extracted_fields: ExtractedField[]
   requirements: DocumentChecklist
 }
 
@@ -159,15 +187,26 @@ export interface SupplierDocument {
   ocr_pages: number[]
   ocr_language: string | null
   ocr_warnings: string[]
+  ocr_quality_score: number | null
+  ocr_quality_status: 'poor' | 'review' | 'good' | null
+  ocr_quality_details: Record<string, unknown> | null
   ai_extraction_status: 'pending' | 'processing' | 'ready' | 'failed'
   ai_extraction_error: string | null
   ai_index_status: 'pending' | 'processing' | 'ready' | 'failed'
   ai_index_error: string | null
+  upload_validation_status: 'pending' | 'text_only' | 'passed'
+  upload_validation_details: Record<string, unknown> | null
   review_status: 'pending' | 'attention' | 'verified' | 'disputed'
   review_comment: string | null
   reviewed_by: string | null
   reviewed_at: string | null
   created_at: string
+}
+
+export interface FlagReasonDraft {
+  reason: string
+  source: 'ai_rag' | 'deterministic_fallback'
+  finding_count: number
 }
 
 export interface DocumentRevision {
@@ -258,11 +297,18 @@ export interface ComplianceRunResponse {
   approval_ready: boolean
 }
 
+export interface ConfirmReadyRequirementsResponse {
+  confirmed_count: number
+  document_ids: string[]
+}
+
 export interface DecisionResponse {
   supplier_id: string
   status: SupplierStatus
   message: string
   erp_supplier_id: string | null
+  erp_record_id: string | null
+  vendor_id: string | null
   decided_at: string
 }
 
@@ -271,11 +317,14 @@ export interface ErpValidation {
   errors: Array<{ field: string; code: string; message: string }>
   warnings: Array<{ field: string; code: string; message: string }>
   existing_erp_supplier_id: string | null
+  existing_vendor_id: string | null
   idempotent_replay: boolean
 }
 
 export interface ErpRecord {
   erp_supplier_id: string
+  erp_record_id: string
+  vendor_id: string
   supplier_reference: string | null
   source_supplier_id: string
   legal_name: string

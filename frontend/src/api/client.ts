@@ -5,11 +5,13 @@ import type {
   AdminProfile,
   AssistantHistoryMessage,
   ComplianceRunResponse,
+  ConfirmReadyRequirementsResponse,
   DecisionResponse,
   DocumentType,
   DocumentRevision,
   ErpRecord,
   ErpValidation,
+  FlagReasonDraft,
   GeneralAssistantMessage,
   GeneralAssistantResponse,
   ProcessSupplierResponse,
@@ -204,6 +206,15 @@ export const api = {
     request<SupplierDocument>(`/suppliers/${supplierId}/documents/${documentId}/review`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, reason }),
+    }),
+  confirmReadyRequirements: (supplierId: string, reviewerName = 'Demo reviewer') =>
+    request<ConfirmReadyRequirementsResponse>(`/suppliers/${supplierId}/requirements/confirm-ready`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reviewer_name: reviewerName }),
+    }),
+  draftFlagReason: (supplierId: string, documentId: string) =>
+    request<FlagReasonDraft>(`/suppliers/${supplierId}/documents/${documentId}/flag-reason-draft`, {
+      method: 'POST',
     }),
   validateErpRecord: (supplierId: string) =>
     request<ErpValidation>(`/suppliers/${supplierId}/erp/validate`, { method: 'POST' }),

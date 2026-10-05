@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-import re
 from typing import Generic, Literal, TypeVar
 
 from openai import AzureOpenAI, OpenAI
@@ -62,6 +61,10 @@ class ReviewerAssistantAnswer(BaseModel):
     cited_chunk_ids: list[str] = Field(default_factory=list, max_length=8)
 
 
+class ReviewerFlagReason(BaseModel):
+    reason: str = Field(min_length=10, max_length=1000)
+
+
 T = TypeVar("T")
 
 
@@ -79,13 +82,6 @@ class EmbeddingResult:
 
 
 PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
-
-
-def _trace_safe_evidence(evidence: str) -> str:
-    """Keep supplier-provided filenames out of optional trace content."""
-    return re.sub(
-        r"(?m)^Source: .*?, page (\d+)$", r"Source: uploaded document, page \1", evidence
-    )
 
 
 def _read_prompt(filename: str) -> str:
@@ -125,14 +121,8 @@ class OpenAIService:
                        " AI findings for a reviewer, never an approval decision.")
         input_metadata = {
             "document_type": expected_type.value,
-            "file_extension": Path(filename).suffix.casefold(),
+            "file_extension": Path(filename).suffix.lower() or "unknown",
             "text_chars": len(redacted_text),
-        }
-        trace_metadata = {
-            "ai_provider": self.settings.ai_provider,
-            "operation": "document_extraction",
-            "prompt_version": self.settings.extraction_prompt_version,
-            "requirement_id": requirement_id,
         }
         with observe_ai_call(
             "supplier.document.extraction", self.settings.active_extraction_model
@@ -141,9 +131,11 @@ class OpenAIService:
                 name="supplier.document.extraction",
                 model=self.settings.active_extraction_model,
                 input_data=self.tracer.input_payload(input_metadata, redacted_text),
-                metadata=trace_metadata,
-                version=self.settings.extraction_prompt_version,
-                model_parameters={"temperature": 0},
+                metadata={
+                    **input_metadata,
+                    "prompt_version": self.settings.extraction_prompt_version,
+                    "feature": "document_extraction",
+                },
             ) as generation:
                 response = self.client.beta.chat.completions.parse(
                     model=self.settings.active_extraction_model,
@@ -153,7 +145,7 @@ class OpenAIService:
                             "role": "user",
                             "content": (
                                 f"Expected upload category: {expected_type.value}\n"
-                                f"Filename: {filename}\n\n{redacted_text}"
+                                f"File type: {input_metadata['file_extension']}\n\n{redacted_text}"
                             ),
                         },
                     ],
@@ -173,16 +165,12 @@ class OpenAIService:
                 )
                 ai_metrics.input_tokens = result.input_tokens
                 ai_metrics.output_tokens = result.output_tokens
-                output_metadata = {
-                    "classified_document_type": parsed.classified_document_type.value,
-                    "field_names": [field.field_name for field in parsed.fields],
-                    "field_count": len(parsed.fields),
-                }
                 generation.update(
-                    output=self.tracer.output_payload(
-                        output_metadata,
-                        parsed.model_dump(mode="json"),
-                    ),
+                    output={
+                        "classified_document_type": parsed.classified_document_type.value,
+                        "field_names": [field.field_name for field in parsed.fields],
+                        "field_count": len(parsed.fields),
+                    },
                     usage_details={"input": result.input_tokens, "output": result.output_tokens},
                 )
                 return result
@@ -198,12 +186,8 @@ class OpenAIService:
                 name="supplier.document.embeddings",
                 model=self.settings.active_embedding_model,
                 input_data=self.tracer.input_payload(input_metadata, texts),
+                metadata={**input_metadata, "feature": "document_embeddings"},
                 observation_type="embedding",
-                metadata={
-                    "ai_provider": self.settings.ai_provider,
-                    "operation": "embedding",
-                },
-                model_parameters={"batch_size": len(texts)},
             ) as generation:
                 response = self.client.embeddings.create(
                     model=self.settings.active_embedding_model,
@@ -221,6 +205,65 @@ class OpenAIService:
                 )
                 return result
 
+    def draft_reviewer_flag_reason(
+        self,
+        *,
+        finding_context: str,
+        policy_context: str,
+    ) -> ModelResult[ReviewerFlagReason]:
+        prompt = _read_prompt("reviewer_flag_reason_v1.txt")
+        input_metadata = {
+            "finding_chars": len(finding_context),
+            "policy_context_chars": len(policy_context),
+        }
+        content = {"findings": finding_context, "retrieved_policy": policy_context}
+        with observe_ai_call(
+            "supplier.reviewer.flag_reason", self.settings.active_answer_model
+        ) as ai_metrics:
+            with self.tracer.generation(
+                name="supplier.reviewer.flag_reason",
+                model=self.settings.active_answer_model,
+                input_data=self.tracer.input_payload(input_metadata, content),
+                metadata={
+                    **input_metadata,
+                    "prompt_version": self.settings.reviewer_flag_prompt_version,
+                    "feature": "reviewer_flag_reason",
+                    "grounding": "calculated_findings_and_policy_rag",
+                },
+            ) as generation:
+                response = self.client.beta.chat.completions.parse(
+                    model=self.settings.active_answer_model,
+                    messages=[
+                        {"role": "system", "content": prompt},
+                        {
+                            "role": "user",
+                            "content": (
+                                f"CALCULATED FINDINGS:\n{finding_context}\n\n"
+                                f"RETRIEVED POLICY:\n{policy_context}"
+                            ),
+                        },
+                    ],
+                    response_format=ReviewerFlagReason,
+                    temperature=0.1,
+                    **self._structured_output_options(),
+                )
+                parsed = response.choices[0].message.parsed
+                if parsed is None:
+                    raise AIResponseError("The flag-reason model returned no structured result.")
+                usage = response.usage
+                result = ModelResult(
+                    value=parsed,
+                    input_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+                    output_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+                )
+                ai_metrics.input_tokens = result.input_tokens
+                ai_metrics.output_tokens = result.output_tokens
+                generation.update(
+                    output={"reason_chars": len(parsed.reason)},
+                    usage_details={"input": result.input_tokens, "output": result.output_tokens},
+                )
+                return result
+
     def answer_question(
         self,
         redacted_question: str,
@@ -231,10 +274,7 @@ class OpenAIService:
             "question_chars": len(redacted_question),
             "evidence_chars": len(evidence),
         }
-        content = {
-            "question": redacted_question,
-            "evidence": _trace_safe_evidence(evidence),
-        }
+        content = {"question": redacted_question, "evidence": evidence}
         with observe_ai_call(
             "supplier.document.question", self.settings.active_answer_model
         ) as ai_metrics:
@@ -243,12 +283,10 @@ class OpenAIService:
                 model=self.settings.active_answer_model,
                 input_data=self.tracer.input_payload(input_metadata, content),
                 metadata={
-                    "ai_provider": self.settings.ai_provider,
-                    "operation": "grounded_answer",
+                    **input_metadata,
                     "prompt_version": self.settings.answer_prompt_version,
+                    "feature": "document_question",
                 },
-                version=self.settings.answer_prompt_version,
-                model_parameters={"temperature": 0},
             ) as generation:
                 response = self.client.beta.chat.completions.parse(
                     model=self.settings.active_answer_model,
@@ -274,16 +312,12 @@ class OpenAIService:
                 )
                 ai_metrics.input_tokens = result.input_tokens
                 ai_metrics.output_tokens = result.output_tokens
-                output_metadata = {
-                    "information_found": parsed.information_found,
-                    "citation_intents": len(parsed.cited_chunk_ids),
-                    "answer_chars": len(parsed.answer),
-                }
                 generation.update(
-                    output=self.tracer.output_payload(
-                        output_metadata,
-                        parsed.model_dump(mode="json"),
-                    ),
+                    output={
+                        "information_found": parsed.information_found,
+                        "citation_intents": len(parsed.cited_chunk_ids),
+                        "answer_chars": len(parsed.answer),
+                    },
                     usage_details={"input": result.input_tokens, "output": result.output_tokens},
                 )
                 return result
@@ -298,24 +332,18 @@ class OpenAIService:
             "message_count": len(messages),
             "message_lengths": [len(message["content"]) for message in messages],
         }
-        content = {
-            "messages": messages,
-            "policy_context": policy_context,
-        }
         with observe_ai_call(
             "supplier.general.assistant", self.settings.active_answer_model
         ) as ai_metrics:
             with self.tracer.generation(
                 name="supplier.general.assistant",
                 model=self.settings.active_answer_model,
-                input_data=self.tracer.input_payload(input_metadata, content),
+                input_data=self.tracer.input_payload(input_metadata, messages),
                 metadata={
-                    "ai_provider": self.settings.ai_provider,
-                    "operation": "supplier_assistant",
+                    **input_metadata,
                     "prompt_version": self.settings.assistant_prompt_version,
+                    "feature": "supplier_assistant",
                 },
-                version=self.settings.assistant_prompt_version,
-                model_parameters={"temperature": 0.2},
             ) as generation:
                 response = self.client.beta.chat.completions.parse(
                     model=self.settings.active_answer_model,
@@ -335,12 +363,8 @@ class OpenAIService:
                 )
                 ai_metrics.input_tokens = result.input_tokens
                 ai_metrics.output_tokens = result.output_tokens
-                output_metadata = {"answer_chars": len(parsed.answer)}
                 generation.update(
-                    output=self.tracer.output_payload(
-                        output_metadata,
-                        parsed.model_dump(mode="json"),
-                    ),
+                    output={"answer_chars": len(parsed.answer)},
                     usage_details={"input": result.input_tokens, "output": result.output_tokens},
                 )
                 return result
@@ -355,24 +379,18 @@ class OpenAIService:
             "message_count": len(messages),
             "message_lengths": [len(message["content"]) for message in messages],
         }
-        trace_content = {
-            "messages": messages,
-            "case_context": _trace_safe_evidence(case_context),
-        }
         with observe_ai_call(
             "supplier.reviewer.assistant", self.settings.active_answer_model
         ) as ai_metrics:
             with self.tracer.generation(
                 name="supplier.reviewer.assistant",
                 model=self.settings.active_answer_model,
-                input_data=self.tracer.input_payload(input_metadata, trace_content),
+                input_data=self.tracer.input_payload(input_metadata, messages),
                 metadata={
-                    "ai_provider": self.settings.ai_provider,
-                    "operation": "reviewer_assistant",
+                    **input_metadata,
                     "prompt_version": "reviewer-assistant-v1",
+                    "feature": "reviewer_assistant",
                 },
-                version="reviewer-assistant-v1",
-                model_parameters={"temperature": 0.2},
             ) as generation:
                 response = self.client.beta.chat.completions.parse(
                     model=self.settings.active_answer_model,
@@ -392,15 +410,8 @@ class OpenAIService:
                 )
                 ai_metrics.input_tokens = result.input_tokens
                 ai_metrics.output_tokens = result.output_tokens
-                output_metadata = {
-                    "answer_chars": len(parsed.answer),
-                    "citation_intents": len(parsed.cited_chunk_ids),
-                }
                 generation.update(
-                    output=self.tracer.output_payload(
-                        output_metadata,
-                        parsed.model_dump(mode="json"),
-                    ),
+                    output={"answer_chars": len(parsed.answer), "citation_intents": len(parsed.cited_chunk_ids)},
                     usage_details={"input": result.input_tokens, "output": result.output_tokens},
                 )
                 return result

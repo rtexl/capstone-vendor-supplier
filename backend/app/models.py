@@ -111,7 +111,15 @@ class Supplier(Base):
         DateTime(timezone=True), nullable=True
     )
     erp_supplier_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    erp_record_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, unique=True, index=True
+    )
     erp_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    @property
+    def vendor_id(self) -> str | None:
+        """Final ERP Vendor ID; the legacy column name is retained for compatibility."""
+        return self.erp_supplier_id
 
     documents: Mapped[list["Document"]] = relationship(
         back_populates="supplier", cascade="all, delete-orphan"
@@ -183,6 +191,9 @@ class Document(Base):
     ocr_pages: Mapped[list[int]] = mapped_column(JSON, default=list)
     ocr_language: Mapped[str | None] = mapped_column(String(50), nullable=True)
     ocr_warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    ocr_quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ocr_quality_status: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    ocr_quality_details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     redacted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     redaction_summary: Mapped[dict[str, int] | None] = mapped_column(JSON, nullable=True)
     processing_status: Mapped[ProcessingStatus] = mapped_column(
@@ -195,6 +206,8 @@ class Document(Base):
     ai_extraction_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
     ai_index_status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     ai_index_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    upload_validation_status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    upload_validation_details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     review_status: Mapped[str] = mapped_column(String(20), default="pending")
     review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)

@@ -10,7 +10,7 @@ from uuid import UUID
 from app.config import Settings, get_settings
 from app.database import Base, get_db
 from app.main import app
-from app.models import DocumentRevision, ExtractedField, Supplier
+from app.models import ComplianceResult, ComplianceStatus, DocumentRevision, ExtractedField, Supplier
 
 
 def test_supplier_can_resume_and_submit_without_ai(tmp_path):
@@ -22,7 +22,7 @@ def test_supplier_can_resume_and_submit_without_ai(tmp_path):
             yield db
 
     app.dependency_overrides[get_db] = db_override
-    app.dependency_overrides[get_settings] = lambda: Settings(upload_dir=tmp_path / "uploads", chroma_path=tmp_path / "chroma")
+    app.dependency_overrides[get_settings] = lambda: Settings(upload_dir=tmp_path / "uploads", chroma_path=tmp_path / "chroma", upload_ai_validation_enabled=False)
     try:
         with TestClient(app) as client:
             signup = client.post("/api/portal/auth/register", json={"email": "SAMPLE@EXAMPLE.COM", "password": "demo-password"})
@@ -75,7 +75,7 @@ def test_supplier_can_resume_and_submit_without_ai(tmp_path):
         engine.dispose()
 
 
-def test_supplier_assistant_explains_flagged_name_mismatch_and_persists_history(tmp_path):
+def test_supplier_assistant_explains_rejection_wording_as_requested_changes_and_persists_history(tmp_path):
     engine = create_engine("sqlite+pysqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
 
@@ -84,7 +84,7 @@ def test_supplier_assistant_explains_flagged_name_mismatch_and_persists_history(
             yield db
 
     app.dependency_overrides[get_db] = db_override
-    app.dependency_overrides[get_settings] = lambda: Settings(upload_dir=tmp_path / "uploads", chroma_path=tmp_path / "chroma")
+    app.dependency_overrides[get_settings] = lambda: Settings(upload_dir=tmp_path / "uploads", chroma_path=tmp_path / "chroma", upload_ai_validation_enabled=False)
     try:
         with TestClient(app) as client:
             account = client.post("/api/portal/auth/register", json={
@@ -112,21 +112,55 @@ def test_supplier_assistant_explains_flagged_name_mismatch_and_persists_history(
                 registration = next(item for item in supplier.documents if item.document_type.value == "registration")
                 registration.review_status = "disputed"
                 registration.review_comment = "The business name entered does not match the name in the document."
+                tax = next(item for item in supplier.documents if item.document_type.value == "tax")
+                tax.review_status = "disputed"
+                tax.review_comment = (
+                    "A registered supplier supplies a GSTIN; a supplier marked not registered supplies a declaration "
+                    "signed within 180 calendar days."
+                )
+                db.add(ComplianceResult(
+                    supplier_id=supplier.id,
+                    rule_code="BASE-002.CHECK-1",
+                    status=ComplianceStatus.FAIL,
+                    message="Policy evaluation found a mismatch in the PAN/tax reference.",
+                    evidence={
+                        "kind": "policy_check",
+                        "document_id": str(tax.id),
+                        "check_number": 1,
+                        "ai_reason": (
+                            "PAN/tax reference does not match. Observed ‘DEMO-PAN-007’; "
+                            "expected ‘DEMO-PAN-0007’."
+                        ),
+                    },
+                ))
                 db.add(ExtractedField(
                     supplier_id=supplier.id, document_id=registration.id,
                     field_name="supplier_name", value="Correct Evidence Company Pvt Ltd",
                     page_number=1, confidence=0.99, needs_review=False,
                 ))
+                db.add(ExtractedField(
+                    supplier_id=supplier.id, document_id=tax.id,
+                    field_name="supplier_name", value=supplier.name,
+                    page_number=1, confidence=0.99, needs_review=False,
+                ))
                 db.commit()
 
             answered = client.post("/api/portal/application/assistant", headers=headers, json={
-                "messages": [{"role": "user", "content": "What is the issue with the document I uploaded?"}],
+                "messages": [{"role": "user", "content": "Why is my application rejected, and what should I do?"}],
             })
             assert answered.status_code == 200, answered.text
+            assert answered.json()["run"]["model"] == "application-state"
+            assert "has **not** been finally rejected" in answered.json()["answer"]
             assert "Completely Different Demo Entity Pvt Ltd" in answered.json()["answer"]
             assert "Correct Evidence Company Pvt Ltd" in answered.json()["answer"]
             assert "registration.txt, page 1" in answered.json()["answer"]
             assert "do not match" in answered.json()["answer"]
+            assert "registered supplier supplies a GSTIN" in answered.json()["answer"]
+            assert "Observed ‘DEMO-PAN-007’; expected ‘DEMO-PAN-0007’" in answered.json()["answer"]
+            assert answered.json()["answer"].count("Name entered in the portal") == 1
+            assert "tax.txt, page 1" not in answered.json()["answer"]
+            assert "Choose replacement" in answered.json()["answer"]
+            assert "Resubmit corrections for review" in answered.json()["answer"]
 
             history = client.get("/api/portal/application/assistant/history", headers=headers)
             assert history.status_code == 200, history.text
@@ -148,7 +182,7 @@ def test_human_review_gates_approval_and_retains_erp_payload(tmp_path):
             yield db
 
     app.dependency_overrides[get_db] = db_override
-    app.dependency_overrides[get_settings] = lambda: Settings(upload_dir=tmp_path / "uploads", chroma_path=tmp_path / "chroma")
+    app.dependency_overrides[get_settings] = lambda: Settings(upload_dir=tmp_path / "uploads", chroma_path=tmp_path / "chroma", upload_ai_validation_enabled=False)
     try:
         with TestClient(app) as client:
             account = client.post("/api/portal/auth/register", json={
@@ -280,8 +314,12 @@ def test_human_review_gates_approval_and_retains_erp_payload(tmp_path):
                 "confirmed": True, "reviewer_name": "Demo reviewer",
             })
             assert approved.status_code == 200, approved.text
-            assert approved.json()["erp_supplier_id"].startswith("ERP-")
+            assert approved.json()["vendor_id"].isdigit()
+            assert len(approved.json()["vendor_id"]) == 10
+            assert approved.json()["erp_record_id"].startswith("ERP-REC-")
             final = client.get(f"/api/suppliers/{supplier_id}", headers=review_headers).json()
+            assert final["vendor_id"] == approved.json()["vendor_id"]
+            assert final["erp_record_id"] == approved.json()["erp_record_id"]
             assert final["erp_payload"]["legal_name"] == "Review Gate Supplies Corrected Ltd"
             assert final["erp_payload"]["tax_reference"] == "DEMO-PAN-900"
     finally:
@@ -298,7 +336,7 @@ def test_originals_are_private_and_retained_after_replacement(tmp_path):
             yield db
 
     app.dependency_overrides[get_db] = db_override
-    app.dependency_overrides[get_settings] = lambda: Settings(upload_dir=tmp_path / "uploads", chroma_path=tmp_path / "chroma")
+    app.dependency_overrides[get_settings] = lambda: Settings(upload_dir=tmp_path / "uploads", chroma_path=tmp_path / "chroma", upload_ai_validation_enabled=False)
     try:
         with TestClient(app) as client:
             first_account = client.post("/api/portal/auth/register", json={"email": "original@example.com", "password": "demo-password"})
@@ -362,7 +400,7 @@ def test_checklist_changes_with_profile_and_is_frozen_on_submission(tmp_path):
             yield db
 
     app.dependency_overrides[get_db] = db_override
-    app.dependency_overrides[get_settings] = lambda: Settings(upload_dir=tmp_path / "uploads")
+    app.dependency_overrides[get_settings] = lambda: Settings(upload_dir=tmp_path / "uploads", upload_ai_validation_enabled=False)
     try:
         with TestClient(app) as client:
             signup = client.post("/api/portal/auth/register", json={"email": "software@example.com", "password": "demo-password"})

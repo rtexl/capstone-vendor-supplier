@@ -27,6 +27,7 @@ def test_admin_reset_and_full_profile_removal(tmp_path, monkeypatch):
     app.dependency_overrides[get_db] = db_override
     app.dependency_overrides[get_settings] = lambda: Settings(
         upload_dir=tmp_path / "uploads", chroma_path=tmp_path / "chroma",
+        upload_ai_validation_enabled=False,
         admin_auth_enabled=True,
         admin_email="owner@example.com", admin_password="strong-admin-password",
     )
@@ -87,6 +88,13 @@ def test_admin_reset_and_full_profile_removal(tmp_path, monkeypatch):
             assert summary["grounded_answers"] == 1
             assert summary["erp_attempts"] == 1
             assert summary["erp_failures"] == 0
+            assert summary["langfuse_metrics_available"] is False
+            assert summary["langfuse_trace_metrics_available"] is False
+            assert summary["langfuse_usage_metrics_available"] is False
+            assert summary["langfuse_score_metrics_available"] is False
+            assert summary["langfuse_total_cost_usd"] == 0
+            assert summary["ocr_enabled"] is True
+            assert summary["erp_mode"] == "In-process demo"
             assert summary["recent_runs"][0]["supplier_reference"].startswith("SUP-")
 
             changed = client.post(f"/api/admin/profiles/{supplier_id}/reset-password", headers=access)

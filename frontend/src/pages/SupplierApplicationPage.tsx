@@ -17,6 +17,16 @@ const fallbackLabels: Record<DocumentType, string> = {
   bank: 'Bank account verification',
 }
 
+function extractedFieldLabel(name: string) {
+  const labels: Record<string, string> = {
+    supplier_name: 'Supplier name',
+    tax_identifier: 'PAN / tax reference',
+    bank_account_number: 'Bank account number',
+    bank_ifsc: 'IFSC',
+  }
+  return labels[name] ?? name.replaceAll('_', ' ').replace(/\b\w/g, (character) => character.toUpperCase())
+}
+
 export function SupplierApplicationPage() {
   const { session } = useAuth()
   const [application, setApplication] = useState<SupplierApplication | null>(null)
@@ -30,7 +40,7 @@ export function SupplierApplicationPage() {
   const [taxReference, setTaxReference] = useState('')
   const [bankAccountNumber, setBankAccountNumber] = useState('')
   const [bankIfsc, setBankIfsc] = useState('')
-  const [selected, setSelected] = useState<{ type: DocumentType; file: File } | null>(null)
+  const [uploadingFile, setUploadingFile] = useState<{ type: DocumentType; name: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -89,16 +99,22 @@ export function SupplierApplicationPage() {
     finally { setBusy(false) }
   }
 
-  async function uploadDocument(type: DocumentType) {
-    if (!selected || selected.type !== type) return
-    setBusy(true); setError(''); setNotice('')
+  async function uploadDocument(type: DocumentType, file: File) {
+    if (uploadingFile) return
+    setError(''); setNotice('')
+    setUploadingFile({ type, name: file.name })
     try {
-      await api.uploadApplicationDocument(type, selected.file)
-      setSelected(null)
+      await api.uploadApplicationDocument(type, file)
       await load()
-      setNotice(`${application?.requirements.documents.find((item) => item.document_type === type)?.label ?? fallbackLabels[type] ?? type} uploaded.`)
+      setNotice(`${application?.requirements.documents.find((item) => item.document_type === type)?.label ?? fallbackLabels[type] ?? type} validated and uploaded.`)
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not upload document.') }
-    finally { setBusy(false) }
+    finally { setUploadingFile(null) }
+  }
+
+  function uploadSelectedFile(type: DocumentType, event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (file) void uploadDocument(type, file)
   }
 
   async function removeDocument(id: string) {
@@ -175,6 +191,7 @@ export function SupplierApplicationPage() {
   const missing = application.requirements.documents.filter((item) => documents.get(item.document_type)?.processing_status !== 'ready')
   const flaggedDocuments = application.documents.filter((document) => document.review_status === 'disputed')
   const correctionMode = submitted && (flaggedDocuments.length > 0 || application.status === 'new')
+  const interactionBusy = busy || uploadingFile !== null
 
   return <Stack spacing={3} maxWidth={860} mx="auto">
     <Box><Typography variant="h4">Your supplier application</Typography>
@@ -202,7 +219,7 @@ export function SupplierApplicationPage() {
           {(selectedCategory?.subcategories ?? []).map((item) => <MenuItem key={item.code} value={item.code}>{item.label}</MenuItem>)}
         </TextField>
         {selectedSubcategory && <Alert severity="info">{selectedSubcategory.definition} Examples: {selectedSubcategory.examples} {plainLanguage(selectedSubcategory.boundary)}</Alert>}
-        <Button onClick={() => void saveCategory()} disabled={busy || !category || !subcategory} variant="contained" size="large">Save and continue</Button>
+        <Button onClick={() => void saveCategory()} disabled={interactionBusy || !category || !subcategory} variant="contained" size="large">Save and continue</Button>
       </Stack>}
 
       {!submitted && step === 1 && <Stack spacing={3}>
@@ -213,7 +230,7 @@ export function SupplierApplicationPage() {
         <TextField label="Bank account number" required value={bankAccountNumber} onChange={(event) => setBankAccountNumber(event.target.value)} helperText="Enter the account number shown on your bank document." />
         <TextField label="Bank IFSC" required value={bankIfsc} onChange={(event) => setBankIfsc(event.target.value)} helperText="Enter the IFSC shown on your bank document." />
         <Stack direction="row" spacing={1}><Button startIcon={<ArrowBackRoundedIcon />} onClick={() => setStep(0)}>Category</Button>
-          <Button onClick={() => void saveDetails()} disabled={busy || name.trim().length < 2 || !email.trim() || !taxReference.trim() || !bankAccountNumber.trim() || !bankIfsc.trim()} variant="contained" size="large">Save and continue to documents</Button></Stack>
+          <Button onClick={() => void saveDetails()} disabled={interactionBusy || name.trim().length < 2 || !email.trim() || !taxReference.trim() || !bankAccountNumber.trim() || !bankIfsc.trim()} variant="contained" size="large">Save and continue to documents</Button></Stack>
       </Stack>}
 
       {(step === 2 || submitted) && <Stack spacing={3}>
@@ -229,14 +246,17 @@ export function SupplierApplicationPage() {
             <TextField label="PAN / tax reference" required value={taxReference} onChange={(event) => setTaxReference(event.target.value)} />
             <TextField label="Bank account number" required value={bankAccountNumber} onChange={(event) => setBankAccountNumber(event.target.value)} />
             <TextField label="Bank IFSC" required value={bankIfsc} onChange={(event) => setBankIfsc(event.target.value)} />
-            <Button variant="outlined" disabled={busy || name.trim().length < 2 || !email.trim() || !taxReference.trim() || !bankAccountNumber.trim() || !bankIfsc.trim()} onClick={() => void saveDetails()}>Save corrected details</Button>
+            <Button variant="outlined" disabled={interactionBusy || name.trim().length < 2 || !email.trim() || !taxReference.trim() || !bankAccountNumber.trim() || !bankIfsc.trim()} onClick={() => void saveDetails()}>Save corrected details</Button>
           </Stack>
         </Box>}
-        <Alert severity="info">These documents are based on the service you selected. A reviewer will check their contents after you submit.</Alert>
+        <Alert severity="info">Each file is checked for readability, document type, expected fields, and obvious supplier-detail mismatches before it is accepted. A reviewer still makes the final assessment after submission.</Alert>
         <Typography variant="body2" color="text.secondary">Upload one PDF, PNG, JPEG or UTF-8 text file (up to 10 MB) for each item. Scanned pages are read with OCR. If an item asks for two pieces of evidence, combine them into one PDF.</Typography>
         {application.requirements.documents.map(({ document_type: type, requirement_id: requirementId, label, why, accepted_evidence, required_fields, checks }) => {
           const document = documents.get(type)
           const flagged = document?.review_status === 'disputed'
+          const ocrFields = document ? application.extracted_fields.filter(
+            (field) => field.document_id === document.id && document.ocr_pages.includes(field.page_number),
+          ) : []
           return <Stack key={type} direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} spacing={1.5} sx={{ p: 2, border: '1px solid', borderColor: flagged ? 'warning.main' : 'divider', bgcolor: flagged ? 'rgba(237,108,2,.06)' : 'transparent', borderRadius: 2 }}>
             <Box sx={{ flex: 1 }}><Stack direction="row" alignItems="center" spacing={0.5}>
               <Typography fontWeight={700}>{label}</Typography>
@@ -248,9 +268,32 @@ export function SupplierApplicationPage() {
               {required_fields && <Typography variant="body2"><strong>Include:</strong> {plainLanguage(required_fields)}</Typography>}
               {checks.length > 0 && <Box component="details" sx={{ mt: 0.5 }}><Typography component="summary" variant="body2" sx={{ cursor: 'pointer' }}>What reviewers will check</Typography>
                 {checks.map((check) => <Typography key={check} variant="body2">{plainLanguage(check)}</Typography>)}</Box>}
-              <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{document ? document.filename : selected?.type === type ? selected.file.name : 'Not uploaded yet'}</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{document ? document.filename : uploadingFile?.type === type ? `Uploading ${uploadingFile.name}…` : 'Not uploaded yet'}</Typography>
               {document?.ocr_pages.length ? <Typography variant="caption" color="info.dark" display="block">OCR used on page{document.ocr_pages.length === 1 ? '' : 's'} {document.ocr_pages.join(', ')}</Typography> : null}
               {document?.ocr_warnings.map((warning) => <Typography key={warning} variant="caption" color="warning.dark" display="block">{warning}</Typography>)}
+              {document?.ocr_quality_score != null && <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: .75 }}>
+                <Chip
+                  size="small"
+                  color={document.ocr_quality_status === 'good' ? 'success' : document.ocr_quality_status === 'review' ? 'warning' : 'error'}
+                  label={`OCR reliability ${Math.round(document.ocr_quality_score)}% · ${document.ocr_quality_status === 'good' ? 'clear' : document.ocr_quality_status === 'review' ? 'double-check' : 'replace image'}`}
+                />
+                <Tooltip title="This estimates extraction reliability from image clarity, OCR output and field confidence. It does not prove authenticity.">
+                  <InfoOutlinedIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                </Tooltip>
+              </Stack>}
+              {ocrFields.length > 0 && <Box component="details" open={document?.ocr_quality_status === 'review'} sx={{ mt: 1, p: 1.25, border: 1, borderColor: document?.ocr_quality_status === 'review' ? 'warning.main' : 'divider', borderRadius: 1.5 }}>
+                <Typography component="summary" variant="body2" fontWeight={700} sx={{ cursor: 'pointer' }}>Double-check what OCR read ({ocrFields.length} values)</Typography>
+                <Alert severity={document?.ocr_quality_status === 'review' ? 'warning' : 'info'} sx={{ mt: 1, py: .25 }}>
+                  This preview is read-only to prevent uploaded evidence from being overwritten. {submitted ? 'The reviewer will compare it with the original.' : 'If anything is wrong, remove this file and upload a clearer image.'}
+                </Alert>
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: .75, mt: 1 }}>
+                  {ocrFields.map((field) => <Box key={field.id} sx={{ p: 1, bgcolor: 'action.hover', borderRadius: 1 }}>
+                    <Typography variant="caption" color="text.secondary" display="block">{extractedFieldLabel(field.field_name)} · page {field.page_number}</Typography>
+                    <Typography variant="body2" fontWeight={650} sx={{ overflowWrap: 'anywhere' }}>{field.value}</Typography>
+                    <Typography variant="caption" color={field.confidence < .75 ? 'warning.dark' : 'text.secondary'}>{field.review_status === 'corrected' ? 'Reviewer-corrected' : `${Math.round(field.confidence * 100)}% extraction confidence`}</Typography>
+                  </Box>)}
+                </Box>
+              </Box>}
               {document?.processing_status === 'failed' && <Alert severity="error" sx={{ mt: 1, py: .25 }}>{document.error_message || 'Text extraction failed.'}</Alert>}
               {flagged && <Alert severity="warning" sx={{ mt: 1, py: 0.25 }}><strong>Reviewer feedback:</strong> {document.review_comment || 'The reviewer requested changes to this evidence.'}</Alert>}
             </Box>
@@ -260,34 +303,25 @@ export function SupplierApplicationPage() {
                 <Chip label={document.processing_status === 'ready' ? 'Uploaded' : document.processing_status} color={document.processing_status === 'ready' ? 'success' : 'warning'} size="small" />
                 <Button size="small" onClick={() => void viewOriginal(document.id)}>View original</Button>
                 <Button size="small" onClick={() => void downloadFile(document)}>Download</Button>
-                {!submitted && document.processing_status === 'failed' && <Button size="small" disabled={busy} onClick={() => void retryTextExtraction(document.id)}>Retry OCR</Button>}
-                {!submitted && <IconButton aria-label={`Remove ${label}`} disabled={busy} onClick={() => void removeDocument(document.id)}><DeleteOutlineRoundedIcon /></IconButton>}
+                {!submitted && document.processing_status === 'failed' && <Button size="small" disabled={interactionBusy} onClick={() => void retryTextExtraction(document.id)}>Retry OCR</Button>}
+                {!submitted && <IconButton aria-label={`Remove ${label}`} disabled={interactionBusy} onClick={() => void removeDocument(document.id)}><DeleteOutlineRoundedIcon /></IconButton>}
               </Stack>
               {flagged && correctionMode && <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-                <Button component="label" size="small" variant="outlined" startIcon={<CloudUploadRoundedIcon />}>Choose replacement
-                  <input hidden type="file" accept="application/pdf,image/png,image/jpeg,text/plain,.pdf,.png,.jpg,.jpeg,.txt" onChange={(event: ChangeEvent<HTMLInputElement>) => {
-                    const file = event.target.files?.[0]; if (file) setSelected({ type, file })
-                    event.target.value = ''
-                  }} />
+                <Button component="label" size="small" variant="outlined" disabled={interactionBusy} startIcon={uploadingFile?.type === type ? <CircularProgress size={16} /> : <CloudUploadRoundedIcon />}>{uploadingFile?.type === type ? 'Uploading replacement…' : 'Choose replacement'}
+                  <input hidden type="file" accept="application/pdf,image/png,image/jpeg,text/plain,.pdf,.png,.jpg,.jpeg,.txt" onChange={(event) => uploadSelectedFile(type, event)} />
                 </Button>
-                {selected?.type === type && <Typography variant="caption" sx={{ maxWidth: 220, overflowWrap: 'anywhere' }}>{selected.file.name}</Typography>}
-                <Button size="small" variant="contained" disabled={busy || selected?.type !== type} onClick={() => void uploadDocument(type)}>Replace flagged document</Button>
               </Stack>}
             </Stack> : (!submitted || correctionMode) && <Stack direction="row" spacing={1}>
-              <Button component="label" variant="outlined" startIcon={<CloudUploadRoundedIcon />}>Choose file
-                <input hidden type="file" accept="application/pdf,image/png,image/jpeg,text/plain,.pdf,.png,.jpg,.jpeg,.txt" onChange={(event: ChangeEvent<HTMLInputElement>) => {
-                  const file = event.target.files?.[0]; if (file) setSelected({ type, file })
-                  event.target.value = ''
-                }} />
+              <Button component="label" variant="outlined" disabled={interactionBusy} startIcon={uploadingFile?.type === type ? <CircularProgress size={16} /> : <CloudUploadRoundedIcon />}>{uploadingFile?.type === type ? 'Uploading…' : 'Choose file'}
+                <input hidden type="file" accept="application/pdf,image/png,image/jpeg,text/plain,.pdf,.png,.jpg,.jpeg,.txt" onChange={(event) => uploadSelectedFile(type, event)} />
               </Button>
-              <Button variant="contained" disabled={busy || selected?.type !== type} onClick={() => void uploadDocument(type)}>Upload</Button>
             </Stack>}
           </Stack>
         })}
         {extras.length > 0 && <Alert severity="warning">Your details changed, so {extras.length === 1 ? 'a previously uploaded document is' : 'some previously uploaded documents are'} no longer in the checklist. Remove {extras.length === 1 ? 'it' : 'them'} before submitting.</Alert>}
         {extras.map((document) => <Stack key={document.id} direction="row" justifyContent="space-between" alignItems="center" sx={{ p: 2, border: '1px solid', borderColor: 'warning.main', borderRadius: 2 }}>
           <Box><Typography fontWeight={700}>{fallbackLabels[document.document_type] ?? catalog?.requirements[document.document_type]?.label ?? 'Previously requested document'} · not requested</Typography><Typography variant="body2">{document.filename}</Typography></Box>
-          {!submitted && <IconButton aria-label={`Remove ${document.filename}`} disabled={busy} onClick={() => void removeDocument(document.id)}><DeleteOutlineRoundedIcon /></IconButton>}
+          {!submitted && <IconButton aria-label={`Remove ${document.filename}`} disabled={interactionBusy} onClick={() => void removeDocument(document.id)}><DeleteOutlineRoundedIcon /></IconButton>}
         </Stack>)}
         {history.length > 0 && <Box>
           <Typography variant="h6">Previous uploads</Typography>
@@ -300,12 +334,12 @@ export function SupplierApplicationPage() {
         </Box>}
         {!submitted && <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" spacing={1}>
           <Button startIcon={<ArrowBackRoundedIcon />} onClick={() => setStep(1)}>Edit details</Button>
-          <Button variant="contained" size="large" disabled={busy || application.requirements.documents.length === 0 || missing.length > 0 || extras.length > 0} onClick={() => void submit()}>
+          <Button variant="contained" size="large" disabled={interactionBusy || application.requirements.documents.length === 0 || missing.length > 0 || extras.length > 0} onClick={() => void submit()}>
             {busy ? 'Submitting application...' : 'Submit application for review'}
           </Button>
         </Stack>}
         {correctionMode && <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="flex-end" spacing={1}>
-          <Button variant="contained" size="large" disabled={busy || application.requirements.documents.length === 0 || missing.length > 0 || extras.length > 0} onClick={() => void resubmit()}>
+          <Button variant="contained" size="large" disabled={interactionBusy || application.requirements.documents.length === 0 || missing.length > 0 || extras.length > 0} onClick={() => void resubmit()}>
             {busy ? 'Resubmitting corrections...' : 'Resubmit corrections for review'}
           </Button>
         </Stack>}

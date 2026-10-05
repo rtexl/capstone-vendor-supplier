@@ -31,12 +31,12 @@ from app.services.document_policy import (
 )
 from app.services.openai_service import AIResponseError, OpenAIService
 from app.services.redaction import redact_pii, restore_placeholders
-from app.services.tracing import get_langfuse_tracer
 from app.services.retrieval import (
     RetrievedChunk,
     query_supplier_chunks,
     replace_document_chunks,
 )
+from app.services.tracing import get_langfuse_tracer, telemetry_subject_id
 
 NOT_FOUND_ANSWER = "Information not found in uploaded supplier documents."
 NULL_LIKE_VALUES = {
@@ -298,6 +298,7 @@ def _process_supplier_documents(
     supplier.decision_reason = None
     supplier.decided_at = None
     supplier.erp_supplier_id = None
+    supplier.erp_record_id = None
     supplier.erp_payload = None
     db.commit()
 
@@ -313,6 +314,13 @@ def _process_supplier_documents(
 
     for document in documents:
         processed_document_ids.add(document.id)
+        if not force_reprocess and document.ai_extraction_status == "ready":
+            validation_details = document.upload_validation_details or {}
+            stored_assessments = validation_details.get("policy_assessments", [])
+            if isinstance(stored_assessments, list):
+                policy_assessments.extend(
+                    item for item in stored_assessments if isinstance(item, dict)
+                )
         redaction = redact_pii(document.extracted_text or "")
         document.redacted_text = redaction.text
         document.redaction_summary = redaction.counts
@@ -558,7 +566,7 @@ def _process_supplier_documents(
     )
 
 
-def _run_supplier_processing(
+def process_supplier_documents(
     db: Session,
     supplier: Supplier,
     settings: Settings,
@@ -570,15 +578,47 @@ def _run_supplier_processing(
     """Process evidence independently while still closing unexpected run failures."""
     supplier_id = supplier.id
     try:
-        return _process_supplier_documents(
-            db=db,
-            supplier=supplier,
-            settings=settings,
-            ai=ai,
-            collection=collection,
-            document_ids=document_ids,
-            force_reprocess=force_reprocess,
-        )
+        trace_metadata = {
+            "feature": "document_processing",
+            "provider": settings.ai_provider,
+            "extraction_model": settings.active_extraction_model,
+            "embedding_model": settings.active_embedding_model,
+            "prompt_version": settings.extraction_prompt_version,
+            "document_scope": "selected" if document_ids is not None else "all",
+            "refresh_requested": force_reprocess,
+        }
+        with get_langfuse_tracer().trace(
+            name="supplier.document.processing",
+            input_data={"document_count": len(document_ids) if document_ids is not None else len(supplier.documents)},
+            metadata=trace_metadata,
+            subject_id=telemetry_subject_id(supplier.id),
+            session_id=f"{telemetry_subject_id(supplier.id)}-processing",
+            tags=["processing", settings.ai_provider],
+        ) as trace:
+            outcome = _process_supplier_documents(
+                db=db,
+                supplier=supplier,
+                settings=settings,
+                ai=ai,
+                collection=collection,
+                document_ids=document_ids,
+                force_reprocess=force_reprocess,
+            )
+            success_rate = (
+                (outcome.processed_document_count - outcome.failed_document_count)
+                / outcome.processed_document_count
+                if outcome.processed_document_count else 1.0
+            )
+            trace.update(output={
+                "status": outcome.run.status.value,
+                "field_count": outcome.field_count,
+                "chunk_count": outcome.chunk_count,
+                "processed_document_count": outcome.processed_document_count,
+                "failed_document_count": outcome.failed_document_count,
+            })
+            trace.score_trace(name="processing_success", value=1 if outcome.run.status == AiRunStatus.SUCCEEDED else 0)
+            trace.score_trace(name="document_success_rate", value=round(success_rate, 4))
+            return outcome
     except Exception as exc:
         db.rollback()
         failed_run = db.scalar(
@@ -602,141 +642,6 @@ def _run_supplier_processing(
         raise
 
 
-def process_supplier_documents(
-    db: Session,
-    supplier: Supplier,
-    settings: Settings,
-    ai: OpenAIService,
-    collection: Collection,
-    document_ids: set[uuid.UUID] | None = None,
-    force_reprocess: bool = False,
-) -> ProcessingOutcome:
-    """Group indexing and extraction observations into one supplier workflow trace."""
-    supplier_id = supplier.id
-    tracer = get_langfuse_tracer()
-    trace_metadata = {
-        "ai_provider": settings.ai_provider,
-        "operation": "supplier_processing",
-        "prompt_version": settings.extraction_prompt_version,
-        "supplier_reference": f"SUP-{supplier_id.hex[:8].upper()}",
-        "document_scope": "selected" if document_ids else "all",
-    }
-    trace_input = {
-        "document_count": len(document_ids) if document_ids else len(supplier.documents),
-        "force_reprocess": force_reprocess,
-    }
-    with tracer.workflow(
-        name="supplier.processing",
-        input_data=trace_input,
-        metadata=trace_metadata,
-        version=settings.extraction_prompt_version,
-        tags=["supplier-processing", settings.ai_provider],
-    ) as workflow:
-        try:
-            outcome = _run_supplier_processing(
-                db=db,
-                supplier=supplier,
-                settings=settings,
-                ai=ai,
-                collection=collection,
-                document_ids=document_ids,
-                force_reprocess=force_reprocess,
-            )
-        except Exception as exc:
-            workflow.update(
-                level="ERROR",
-                status_message=_safe_failure_message(exc, stage="Processing finalization"),
-                output={"status": "failed"},
-            )
-            raise
-
-        trace_output = {
-            "status": outcome.run.status.value,
-            "ai_run_id": str(outcome.run.id),
-            "field_count": outcome.field_count,
-            "chunk_count": outcome.chunk_count,
-            "processed_document_count": outcome.processed_document_count,
-            "failed_document_count": outcome.failed_document_count,
-        }
-        workflow.update(
-            output=trace_output,
-            metadata={**trace_metadata, "ai_run_id": str(outcome.run.id)},
-            level="WARNING" if outcome.failed_document_count else "DEFAULT",
-            status_message=(
-                f"{outcome.failed_document_count} document stage(s) failed"
-                if outcome.failed_document_count else None
-            ),
-        )
-        workflow.set_trace_io(input_data=trace_input, output_data=trace_output)
-        return outcome
-
-
-def answer_supplier_question(
-    db: Session,
-    supplier: Supplier,
-    question: str,
-    settings: Settings,
-    ai: OpenAIService,
-    collection: Collection,
-) -> QuestionOutcome:
-    """Group query embedding, retrieval, and answer generation in one trace."""
-    tracer = get_langfuse_tracer()
-    supplier_reference = f"SUP-{supplier.id.hex[:8].upper()}"
-    trace_metadata = {
-        "ai_provider": settings.ai_provider,
-        "operation": "supplier_question",
-        "prompt_version": settings.answer_prompt_version,
-        "supplier_reference": supplier_reference,
-    }
-    redacted_question = redact_pii(question.strip()).text
-    trace_input = tracer.input_payload(
-        {"question_chars": len(question)},
-        redacted_question,
-    )
-    with tracer.workflow(
-        name="supplier.question",
-        input_data=trace_input,
-        metadata=trace_metadata,
-        version=settings.answer_prompt_version,
-        tags=["supplier-rag", settings.ai_provider],
-    ) as workflow:
-        try:
-            outcome = _answer_supplier_question(
-                db=db,
-                supplier=supplier,
-                question=question,
-                settings=settings,
-                ai=ai,
-                collection=collection,
-            )
-        except Exception as exc:
-            workflow.update(
-                level="ERROR",
-                status_message=_safe_failure_message(exc, stage="Supplier question"),
-                output={"status": "failed"},
-            )
-            raise
-
-        trace_output = tracer.output_payload(
-            {
-                "status": outcome.run.status.value,
-                "ai_run_id": str(outcome.run.id),
-                "information_found": outcome.information_found,
-                "citation_count": len(outcome.citations),
-            },
-            {
-                "answer": outcome.answer,
-                "information_found": outcome.information_found,
-            },
-        )
-        workflow.update(
-            output=trace_output,
-            metadata={**trace_metadata, "ai_run_id": str(outcome.run.id)},
-        )
-        workflow.set_trace_io(input_data=trace_input, output_data=trace_output)
-        return outcome
-
-
 def _answer_supplier_question(
     db: Session,
     supplier: Supplier,
@@ -756,29 +661,13 @@ def _answer_supplier_question(
     try:
         redaction = redact_pii(question.strip())
         query_embedding = ai.embed([redaction.text])
-        tracer = get_langfuse_tracer()
-        with tracer.observation(
-            name="supplier.document.retrieval",
-            observation_type="retriever",
-            input_data={
-                "top_k": settings.rag_top_k,
-                "max_distance": settings.rag_max_distance,
-            },
-            metadata={"operation": "supplier_scoped_retrieval"},
-        ) as retrieval:
-            retrieved = query_supplier_chunks(
-                collection=collection,
-                supplier_id=str(supplier.id),
-                query_embedding=query_embedding.embeddings[0],
-                limit=settings.rag_top_k,
-                max_distance=settings.rag_max_distance,
-            )
-            retrieval.update(
-                output={
-                    "retrieval_count": len(retrieved),
-                    "distances": [round(chunk.distance, 4) for chunk in retrieved],
-                }
-            )
+        retrieved = query_supplier_chunks(
+            collection=collection,
+            supplier_id=str(supplier.id),
+            query_embedding=query_embedding.embeddings[0],
+            limit=settings.rag_top_k,
+            max_distance=settings.rag_max_distance,
+        )
         input_tokens = query_embedding.input_tokens
         output_tokens = 0
 
@@ -861,3 +750,56 @@ def _answer_supplier_question(
         latency_ms = int((time.perf_counter() - started) * 1000)
         _fail_run(db, supplier.id, run.id, _safe_failure_message(exc), latency_ms)
         raise
+
+
+def answer_supplier_question(
+    db: Session,
+    supplier: Supplier,
+    question: str,
+    settings: Settings,
+    ai: OpenAIService,
+    collection: Collection,
+) -> QuestionOutcome:
+    """Answer inside one correlated retrieval-and-generation Langfuse trace."""
+
+    with get_langfuse_tracer().trace(
+        name="supplier.document.rag",
+        input_data={"question_chars": len(question.strip())},
+        metadata={
+            "feature": "supplier_rag",
+            "provider": settings.ai_provider,
+            "answer_model": settings.active_answer_model,
+            "embedding_model": settings.active_embedding_model,
+            "prompt_version": settings.answer_prompt_version,
+            "rag_top_k": settings.rag_top_k,
+        },
+        subject_id=telemetry_subject_id(supplier.id),
+        session_id=f"{telemetry_subject_id(supplier.id)}-rag",
+        tags=["rag", settings.ai_provider],
+    ) as trace:
+        outcome = _answer_supplier_question(
+            db=db,
+            supplier=supplier,
+            question=question,
+            settings=settings,
+            ai=ai,
+            collection=collection,
+        )
+        citation_count = len(outcome.citations)
+        grounded = not outcome.information_found or citation_count > 0
+        outcome.run.details = {
+            **outcome.run.details,
+            "citation_count": citation_count,
+            "grounding_guard_passed": grounded,
+        }
+        db.commit()
+        db.refresh(outcome.run)
+        trace.update(output={
+            "information_found": outcome.information_found,
+            "retrieval_count": outcome.run.retrieval_count,
+            "citation_count": citation_count,
+            "grounding_guard_passed": grounded,
+        })
+        trace.score_trace(name="grounding_guard", value=1 if grounded else 0)
+        trace.score_trace(name="citation_count", value=citation_count)
+        return outcome

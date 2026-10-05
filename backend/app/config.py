@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     upload_dir: Path = Path("uploads")
     chroma_path: Path = Path("data/chroma")
     max_upload_size_mb: int = 10
+    upload_ai_validation_enabled: bool = True
     ocr_enabled: bool = True
     ocr_language: str = "eng"
     ocr_dpi: int = Field(default=300, ge=150, le=600)
@@ -22,6 +23,8 @@ class Settings(BaseSettings):
     ocr_min_native_words: int = Field(default=5, ge=0, le=200)
     ocr_image_coverage_threshold: float = Field(default=0.5, ge=0.1, le=1.0)
     ocr_max_pages: int = Field(default=30, ge=1, le=200)
+    ocr_quality_reject_threshold: int = Field(default=35, ge=0, le=100)
+    ocr_quality_review_threshold: int = Field(default=70, ge=0, le=100)
     reviewer_auth_enabled: bool = False
     reviewer_email: str | None = None
     reviewer_password: SecretStr | None = None
@@ -45,6 +48,7 @@ class Settings(BaseSettings):
     extraction_prompt_version: str = "extraction-v4"
     answer_prompt_version: str = "rag-answer-v3"
     assistant_prompt_version: str = "supplier-assistant-v2"
+    reviewer_flag_prompt_version: str = "reviewer-flag-reason-v1"
     langfuse_enabled: bool = True
     langfuse_public_key: str | None = None
     langfuse_secret_key: SecretStr | None = None
